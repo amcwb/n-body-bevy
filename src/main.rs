@@ -1,10 +1,35 @@
 use bevy::{
     input::mouse::{MouseScrollUnit, MouseWheel},
-    prelude::*,
+    prelude::*, tasks::AsyncComputeTaskPool,
 };
 use bevy_prototype_lyon::prelude::*;
 use rand::{distributions::Uniform, prelude::Distribution, Rng};
+// use directx_math::XMScalarSinCos;
 
+
+type ImplIteratorMut<'a, Item> =
+    ::std::iter::Chain<::std::slice::IterMut<'a, Item>, ::std::slice::IterMut<'a, Item>>;
+trait SplitOneMut {
+    type Item;
+
+    fn split_one_mut(
+        &'_ mut self,
+        i: usize,
+    ) -> (&'_ mut Self::Item, ImplIteratorMut<'_, Self::Item>);
+}
+
+impl<T> SplitOneMut for [T] {
+    type Item = T;
+
+    fn split_one_mut(
+        &'_ mut self,
+        i: usize,
+    ) -> (&'_ mut Self::Item, ImplIteratorMut<'_, Self::Item>) {
+        let (prev, current_and_end) = self.split_at_mut(i);
+        let (current, end) = current_and_end.split_at_mut(1);
+        (&mut current[0], prev.iter_mut().chain(end))
+    }
+}
 #[derive(Component)]
 struct Particle {
     mass: f64,
@@ -14,17 +39,27 @@ struct Particle {
     vy: f64,
 }
 
+#[derive(Component)]
+struct TimeScale(f64);
+
 const GRAVITY: f64 = 0.000000000066742 * 1000.0;
 impl Particle {
     fn force_from(&mut self, other: &Particle, distance2: Option<f64>) -> (f64, f64) {
-        let _span = info_span!("calculate_force").entered();
+        let _span = info_span!("calculate_force_from").entered();
         let distance2 = match distance2 {
             Some(e) => e,
             None => self.distance2_to(other)
         };
+        let _span2 = info_span!("calculate_force").entered();
         let f = (GRAVITY * self.mass * other.mass) / distance2;
+        _span2.exit();
+        let _span2 = info_span!("calculate_atan").entered();
         let theta = (other.y - self.y).atan2(other.x - self.x);
+        _span2.exit();
 
+        // let mut cos: f32 = 0.0;
+        // let mut sin: f32 = 0.0;
+        // XMScalarSinCos(&mut sin, &mut cos, theta as f32);
         let fx = theta.cos() * f;
         let fy = theta.sin() * f;
 
@@ -65,11 +100,14 @@ impl PartialEq for Particle {
 
 fn setup_camera(mut commands: Commands) {
     commands.spawn_bundle(OrthographicCameraBundle::new_2d());
+    commands.insert_resource(TimeScale(1.0));
 }
 
 fn camera_control(
     mut scroll_evr: EventReader<MouseWheel>,
+    keys: Res<Input<KeyCode>>,
     time: Res<Time>,
+    mut timescale: ResMut<TimeScale>,
     mut query: Query<&mut OrthographicProjection>,
 ) {
     let dist = 1.0 * time.delta().as_secs_f32();
@@ -93,6 +131,13 @@ fn camera_control(
         log_scale += scroll_y * dist;
 
         projection.scale = log_scale.exp();
+    }
+
+    if keys.pressed(KeyCode::Z) {
+        timescale.0 = timescale.0 / 1.5;
+    }
+    if keys.pressed(KeyCode::X) {
+        timescale.0 = timescale.0 * 1.5;
     }
 }
 
@@ -118,11 +163,11 @@ fn main() {
 fn add_particles(mut commands: Commands) {
     let direction = 1.0; // clockwise
     let star_mass = 2000000000.0;
-    let max_distance = 5000;
+    let max_distance = 500;
     let max_mass = 1000;
     let amount = 10000;
 
-    let center_x = 0.0; // -250.0;
+    let center_x = -125.0; // -250.0;
     let center_y = 0.0;
     let base_vx = 0.0;
     let base_vy = 0.0;
@@ -140,18 +185,18 @@ fn add_particles(mut commands: Commands) {
         direction,
     );
 
-    // let direction = -1.0; // anti-clockwise
-    // let star_mass = 1000000000.0;
-    // let max_distance = 500;
-    // let max_mass = 500;
-    // let amount = 100;
+    let direction = -1.0; // anti-clockwise
+    let star_mass = 1000000000.0;
+    let max_distance = 500;
+    let max_mass = 500;
+    let amount = 10000;
 
-    // let center_x = 250.0;
-    // let center_y = 0.0;
-    // let base_vx = 0.0;
-    // let base_vy = 0.0;
+    let center_x = 125.0;
+    let center_y = 0.0;
+    let base_vx = 0.0;
+    let base_vy = 0.01633915542;
 
-    // create_system(&mut commands, max_distance, max_mass, center_x, center_y, base_vx, base_vy, star_mass, amount, direction);
+    create_system(&mut commands, max_distance, max_mass, center_x, center_y, base_vx, base_vy, star_mass, amount, direction);
 }
 
 fn create_system(
@@ -237,101 +282,91 @@ fn create_star(
 }
 
 fn apply_forces(
+    mut commands: Commands,
+    timescale: Res<TimeScale>,
     time: Res<Time>,
     mut query: Query<(Entity, &mut Particle)>,
 ) {
-    let dt = time.delta_seconds() as f64;
-    let mut combinations = query.iter_combinations_mut();
-    while let Some([a, b]) = combinations.fetch_next() {
-        let mut p1: Mut<Particle> = a.1;
-        let mut p2: Mut<Particle> = b.1;
-        
-        // if p1.mass > 50.0 || p2.mass > 50.0 {
-        //     let target: &mut Mut<Particle>;
-        //     let origin: &mut Mut<Particle>;
-        //     let origin_entity: &Entity;
+    let dt = time.delta_seconds() as f64 * timescale.0;
+    let _span_all = info_span!("apply_forces").entered();
+    let mut particles: Vec<(Entity, Mut<Particle>)> = vec![];
 
-        //     if p1.mass > p2.mass {
-        //         target = &mut p1;
-        //         origin = &mut p2;
-        //         origin_entity = &b.0;
-        //     } else {
-        //         target = &mut p2;
-        //         origin = &mut p1;
-        //         origin_entity = &a.0;
-        //     }
-
-        //     let distance = target.distance_to(origin.as_ref());
-        //     if distance < (target.radius() + origin.radius()) / 2.0 {
-        //         // Combine
-        //         commands.entity(*origin_entity).despawn();
-
-        //         let momentum_x = target.mass * target.vx + origin.mass * origin.vx * 0.75; // assume some energy lost;
-        //         let momentum_y = target.mass * target.vy + origin.mass * origin.vy * 0.75; // assume some energy lost;
-
-        //         // if origin.color == YELLOW || target.color == YELLOW {
-        //         //     target.color = YELLOW;
-        //         // }
-
-        //         target.mass += origin.mass;
-        //         target.vx = momentum_x / target.mass;
-        //         target.vy = momentum_y / target.mass;
-        //     }
-        // }
-
-        
-        if p1.mass < 1000000.0 && p2.mass < 1000000.0 {
+    for (entity, p1) in query.iter_mut() {
+        particles.push((entity, p1))
+    }
+    for p1idx in 0..particles.len() {
+        let ((entity, p1), particles) = particles.split_one_mut(p1idx);
+        if p1.mass < 10000.0 {
             continue;
         }
-
-        let distance = p1.distance2_to(&p2);
-
-        // TODO: Handle collisions
-        // if p1.distance_to(&p2) < 1.0 {
-        //     continue;
-        // }
-
-        if p2.mass > 1000000.0 {
-            // p1
-            let mut fx_p1: f64 = 0.0;
-            let mut fy_p1: f64 = 0.0;
-            let (t_fx_p1, t_fy_p1) = p1.force_from(&p2, Some(distance));
-            {
-                let _span = info_span!("apply_velocities").entered();
-                fx_p1 += t_fx_p1;
-                fy_p1 += t_fy_p1;
-
-                p1.vx += (fx_p1 / p1.mass) * dt;
-                p1.vy += (fy_p1 / p1.mass) * dt;
-
-                p1.x += p1.vx * dt;
-                p1.y += p1.vy * dt;
-                _span.exit();
+        
+        for (entity2, p2) in particles {
+            if p1.as_mut() == p2.as_mut() {
+                continue;
             }
-            // println!("{} -> {}: {} {}", p2.mass, p1.mass, fx_p1, fy_p1);
-        }
+            
+            if p1.mass > 50.0 || p2.mass > 50.0 {
+                let target: &mut Mut<Particle>;
+                let origin: &mut Mut<Particle>;
+                let origin_entity: &Entity;
+    
+                if p1.mass > p2.mass {
+                    target = p1;
+                    origin = p2;
+                    origin_entity = entity2;
+                } else {
+                    target = p2;
+                    origin = p1;
+                    origin_entity = entity;
+                }
+    
+                let distance = target.distance_to(origin.as_ref());
+                if distance < (target.radius() + origin.radius()) / 2.0 {
+                    // Combine
+                    commands.entity(*origin_entity).despawn();
+    
+                    let momentum_x = target.mass * target.vx + origin.mass * origin.vx * 0.75; // assume some energy lost;
+                    let momentum_y = target.mass * target.vy + origin.mass * origin.vy * 0.75; // assume some energy lost;
+    
+                    // if origin.color == YELLOW || target.color == YELLOW {
+                    //     target.color = YELLOW;
+                    // }
+    
+                    target.mass += origin.mass;
+                    target.vx = momentum_x / target.mass;
+                    target.vy = momentum_y / target.mass;
+                }
+            }
 
-        if p1.mass > 1000000.0 {
+            let distance = p1.distance2_to(&p2);
+            let _span_parent = info_span!("particle_1").entered();
             // p2
             let mut fx_p2: f64 = 0.0;
             let mut fy_p2: f64 = 0.0;
             let (t_fx_p2, t_fy_p2) = p2.force_from(&p1, Some(distance));
 
             {
-                let _span = info_span!("apply_velocities").entered();
+                let _span = info_span!("sum_forces").entered();
                 fx_p2 += t_fx_p2;
                 fy_p2 += t_fy_p2;
 
+                let _span2 = info_span!("apply_velocities").entered();
                 p2.vx += (fx_p2 / p2.mass) * dt;
                 p2.vy += (fy_p2 / p2.mass) * dt;
+                _span2.exit();
 
+                let _span2 = info_span!("apply_position").entered();
                 p2.x += p2.vx * dt;
                 p2.y += p2.vy * dt;
+                _span2.exit();
                 _span.exit();
             }
+            _span_parent.exit();
             // println!("{} -> {}: {} {}", p1.mass, p2.mass, fx_p2, fy_p2);
         }
-    }
+    };
+
+    _span_all.exit();
 }
 
 fn transform_objects(mut query: Query<(&mut Particle, &mut Transform)>) {
