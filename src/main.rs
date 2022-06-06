@@ -1,11 +1,11 @@
 use bevy::{
     input::mouse::{MouseScrollUnit, MouseWheel},
-    prelude::*, tasks::AsyncComputeTaskPool,
+    prelude::*,
+    tasks::AsyncComputeTaskPool,
 };
 use bevy_prototype_lyon::prelude::*;
 use rand::{distributions::Uniform, prelude::Distribution, Rng};
 // use directx_math::XMScalarSinCos;
-
 
 type ImplIteratorMut<'a, Item> =
     ::std::iter::Chain<::std::slice::IterMut<'a, Item>, ::std::slice::IterMut<'a, Item>>;
@@ -42,13 +42,17 @@ struct Particle {
 #[derive(Component)]
 struct TimeScale(f64);
 
+#[derive(Component)]
+struct MassiveObjects;
+
+
 const GRAVITY: f64 = 0.000000000066742 * 1000.0;
 impl Particle {
-    fn force_from(&mut self, other: &Particle, distance2: Option<f64>) -> (f64, f64) {
+    fn force_from(&self, other: &Particle, distance2: Option<f64>) -> (f64, f64) {
         let _span = info_span!("calculate_force_from").entered();
         let distance2 = match distance2 {
             Some(e) => e,
-            None => self.distance2_to(other)
+            None => self.distance2_to(other),
         };
         let _span2 = info_span!("calculate_force").entered();
         let f = (GRAVITY * self.mass * other.mass) / distance2;
@@ -157,13 +161,14 @@ fn main() {
         .add_system(apply_forces)
         .add_system(transform_objects)
         .add_system(camera_control)
+        .add_system(massive_objects_manager)
         .run();
 }
 
 fn add_particles(mut commands: Commands) {
     let direction = 1.0; // clockwise
     let star_mass = 2000000000.0;
-    let max_distance = 500;
+    let max_distance = 5000;
     let max_mass = 1000;
     let amount = 10000;
 
@@ -185,18 +190,29 @@ fn add_particles(mut commands: Commands) {
         direction,
     );
 
-    let direction = -1.0; // anti-clockwise
-    let star_mass = 1000000000.0;
-    let max_distance = 500;
-    let max_mass = 500;
-    let amount = 10000;
+    // let direction = -1.0; // anti-clockwise
+    // let star_mass = 1000000000.0;
+    // let max_distance = 500;
+    // let max_mass = 500;
+    // let amount = 10000;
 
-    let center_x = 125.0;
-    let center_y = 0.0;
-    let base_vx = 0.0;
-    let base_vy = 0.01633915542;
+    // let center_x = 125.0;
+    // let center_y = 0.0;
+    // let base_vx = 0.0;
+    // let base_vy = 0.01633915542;
 
-    create_system(&mut commands, max_distance, max_mass, center_x, center_y, base_vx, base_vy, star_mass, amount, direction);
+    // create_system(
+    //     &mut commands,
+    //     max_distance,
+    //     max_mass,
+    //     center_x,
+    //     center_y,
+    //     base_vx,
+    //     base_vy,
+    //     star_mass,
+    //     amount,
+    //     direction,
+    // );
 }
 
 fn create_system(
@@ -254,8 +270,8 @@ fn create_system(
     }
 }
 
-fn create_star(
-    commands: &mut Commands,
+fn create_star<'a>(
+    commands: &'a mut Commands,
     x: f64,
     y: f64,
     vx: f64,
@@ -269,6 +285,7 @@ fn create_star(
         radius: (mass.log10()) as f32,
         ..shapes::Circle::default()
     };
+    
     commands
         .spawn_bundle(GeometryBuilder::build_as(
             &shape,
@@ -279,64 +296,68 @@ fn create_star(
             Transform::default(),
         ))
         .insert(Particle { mass, x, y, vx, vy });
+
+    // if mass > 10_000.0 {
+    //     commands.entity(id).insert(MassiveObjects);
+    // }
 }
 
 fn apply_forces(
-    mut commands: Commands,
     timescale: Res<TimeScale>,
     time: Res<Time>,
-    mut query: Query<(Entity, &mut Particle)>,
+    pool: Res<AsyncComputeTaskPool>,
+    mut query: Query<&mut Particle, Without<MassiveObjects>>,
+    massive_query: Query<&Particle, With<MassiveObjects>>
 ) {
     let dt = time.delta_seconds() as f64 * timescale.0;
     let _span_all = info_span!("apply_forces").entered();
-    let mut particles: Vec<(Entity, Mut<Particle>)> = vec![];
+    let mut massive_objects: Vec<&Particle> = vec![];
 
-    for (entity, p1) in query.iter_mut() {
-        particles.push((entity, p1))
+    // trusts that not many massive objects will be present
+    let _span2 = info_span!("collect massive objs").entered();
+    for particle in massive_query.iter() {
+        massive_objects.push(particle);
     }
-    for p1idx in 0..particles.len() {
-        let ((entity, p1), particles) = particles.split_one_mut(p1idx);
-        if p1.mass < 10000.0 {
-            continue;
-        }
-        
-        for (entity2, p2) in particles {
-            if p1.as_mut() == p2.as_mut() {
-                continue;
+    _span2.exit();
+
+    query.par_for_each_mut(&pool, 64, |mut p2| {
+        for p1 in &massive_objects {
+            if *p1 == p2.as_ref() {
+                return;
             }
-            
-            if p1.mass > 50.0 || p2.mass > 50.0 {
-                let target: &mut Mut<Particle>;
-                let origin: &mut Mut<Particle>;
-                let origin_entity: &Entity;
-    
-                if p1.mass > p2.mass {
-                    target = p1;
-                    origin = p2;
-                    origin_entity = entity2;
-                } else {
-                    target = p2;
-                    origin = p1;
-                    origin_entity = entity;
-                }
-    
-                let distance = target.distance_to(origin.as_ref());
-                if distance < (target.radius() + origin.radius()) / 2.0 {
-                    // Combine
-                    commands.entity(*origin_entity).despawn();
-    
-                    let momentum_x = target.mass * target.vx + origin.mass * origin.vx * 0.75; // assume some energy lost;
-                    let momentum_y = target.mass * target.vy + origin.mass * origin.vy * 0.75; // assume some energy lost;
-    
-                    // if origin.color == YELLOW || target.color == YELLOW {
-                    //     target.color = YELLOW;
-                    // }
-    
-                    target.mass += origin.mass;
-                    target.vx = momentum_x / target.mass;
-                    target.vy = momentum_y / target.mass;
-                }
-            }
+
+            // if p1.mass > 50.0 || p2.mass > 50.0 {
+            //     let target: &mut Particle;
+            //     let origin: &mut Particle;
+            //     let origin_entity: &Entity;
+
+            //     if p1.mass > p2.mass {
+            //         target = p1;
+            //         origin = p2.as_mut();
+            //         origin_entity = &entity2;
+            //     } else {
+            //         target = p2.as_mut();
+            //         origin = p1;
+            //         origin_entity = entity;
+            //     }
+
+            //     let distance = target.distance_to(origin);
+            //     if distance < (target.radius() + origin.radius()) / 2.0 {
+            //         // Combine
+            //         commands.entity(*origin_entity).despawn();
+
+            //         let momentum_x = target.mass * target.vx + origin.mass * origin.vx * 0.75; // assume some energy lost;
+            //         let momentum_y = target.mass * target.vy + origin.mass * origin.vy * 0.75; // assume some energy lost;
+
+            //         // if origin.color == YELLOW || target.color == YELLOW {
+            //         //     target.color = YELLOW;
+            //         // }
+
+            //         target.mass += origin.mass;
+            //         target.vx = momentum_x / target.mass;
+            //         target.vy = momentum_y / target.mass;
+            //     }
+            // }
 
             let distance = p1.distance2_to(&p2);
             let _span_parent = info_span!("particle_1").entered();
@@ -362,12 +383,22 @@ fn apply_forces(
                 _span.exit();
             }
             _span_parent.exit();
-            // println!("{} -> {}: {} {}", p1.mass, p2.mass, fx_p2, fy_p2);
         }
-    };
+    });
 
     _span_all.exit();
 }
+
+fn massive_objects_manager(mut commands: Commands, query: Query<(Entity, &mut Particle)>) {
+    query.for_each(|(entity, p)| {
+        if p.mass > 10000.0 {
+            commands.entity(entity).insert(MassiveObjects);
+        } else {
+            commands.entity(entity).remove::<MassiveObjects>();
+        }
+    })
+}
+
 
 fn transform_objects(mut query: Query<(&mut Particle, &mut Transform)>) {
     for (particle, transform) in query.iter_mut() {
