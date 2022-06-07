@@ -179,7 +179,7 @@ fn main() {
         .add_system(apply_forces)
         .add_system(transform_objects)
         .add_system(camera_control)
-        .add_system(massive_objects_manager.after(collision_manager))
+        .add_system(massive_objects_manager.before(collision_manager))
         .add_system(collision_manager)
         .run();
 }
@@ -189,7 +189,7 @@ fn add_particles(mut commands: Commands) {
     let star_mass = 2000000000.0;
     let max_distance = 500;
     let max_mass = 1000;
-    let amount = 1000;
+    let amount = 3000;
 
     let center_x = -125.0; // -250.0;
     let center_y = 0.0;
@@ -209,29 +209,29 @@ fn add_particles(mut commands: Commands) {
         direction,
     );
 
-    // let direction = -1.0; // anti-clockwise
-    // let star_mass = 1000000000.0;
-    // let max_distance = 500;
-    // let max_mass = 500;
-    // let amount = 10000;
+    let direction = -1.0; // anti-clockwise
+    let star_mass = 1000000000.0;
+    let max_distance = 500;
+    let max_mass = 500;
+    let amount = 3000;
 
-    // let center_x = 1000.0;
-    // let center_y = 0.0;
-    // let base_vx = 0.0;
-    // let base_vy = 0.0;
+    let center_x = 1000.0;
+    let center_y = 0.0;
+    let base_vx = 0.0;
+    let base_vy = 0.0;
 
-    // create_system(
-    //     &mut commands,
-    //     max_distance,
-    //     max_mass,
-    //     center_x,
-    //     center_y,
-    //     base_vx,
-    //     base_vy,
-    //     star_mass,
-    //     amount,
-    //     direction,
-    // );
+    create_system(
+        &mut commands,
+        max_distance,
+        max_mass,
+        center_x,
+        center_y,
+        base_vx,
+        base_vy,
+        star_mass,
+        amount,
+        direction,
+    );
 }
 
 fn create_system(
@@ -340,6 +340,8 @@ fn apply_forces(
     _span2.exit();
 
     query.par_for_each_mut(&pool, 64, |mut p2| {
+        let mut fx_p2: f64 = 0.0;
+        let mut fy_p2: f64 = 0.0;
         for p1 in &massive_objects {
             if p1.as_ref() == p2.as_ref() {
                 return;
@@ -381,28 +383,26 @@ fn apply_forces(
             let distance = p1.distance2_to(&p2);
             let _span_parent = info_span!("particle_1").entered();
             // p2
-            let mut fx_p2: f64 = 0.0;
-            let mut fy_p2: f64 = 0.0;
             let (t_fx_p2, t_fy_p2) = p2.force_from(&p1, Some(distance));
-
             {
                 let _span = info_span!("sum_forces").entered();
                 fx_p2 += t_fx_p2;
                 fy_p2 += t_fy_p2;
-
-                let _span2 = info_span!("apply_velocities").entered();
-                p2.vx += (fx_p2 / p2.mass) * dt;
-                p2.vy += (fy_p2 / p2.mass) * dt;
-                _span2.exit();
-
-                let _span2 = info_span!("apply_position").entered();
-                p2.x += p2.vx * dt;
-                p2.y += p2.vy * dt;
-                _span2.exit();
                 _span.exit();
+
             }
             _span_parent.exit();
         }
+
+        let _span2 = info_span!("apply_velocities").entered();
+        p2.vx += (fx_p2 / p2.mass) * dt;
+        p2.vy += (fy_p2 / p2.mass) * dt;
+        _span2.exit();
+
+        let _span2 = info_span!("apply_position").entered();
+        p2.x += p2.vx * dt;
+        p2.y += p2.vy * dt;
+        _span2.exit();
     });
 
     for p1idx in 0..massive_objects.len() {
@@ -449,14 +449,14 @@ fn massive_objects_manager(mut commands: Commands, query: Query<(Entity, &mut Pa
     })
 }
 
-fn collision_manager(mut commands: Commands, query: Query<(Entity, &Transform)>, mut query2: Query<&mut Particle>, treeaccess: Res<NNTree>) {
+fn collision_manager(mut commands: Commands, query: Query<(Entity, &Transform), With<MassiveObjects>>, mut query2: Query<&mut Particle, With<MassiveObjects>>, treeaccess: Res<NNTree>) {
     for (entity, transform) in query.iter() {
         let radius = {
             let p1: Particle = match query2.get(entity) {
                 Ok(e) => *e,
                 Err(_) => continue
             };
-            p1.radius()
+            p1.radius() * 1.10
         };
         
         for (_, entity2) in treeaccess.within_distance(transform.translation, radius as f32) {
