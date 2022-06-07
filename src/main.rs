@@ -46,7 +46,6 @@ struct TimeScale(f64);
 #[derive(Component)]
 struct MassiveObjects;
 
-
 // type alias for easier usage later
 type NNTree = KDTreeAccess2D<Particle>;
 
@@ -188,10 +187,10 @@ fn add_particles(mut commands: Commands) {
     let direction = 1.0; // clockwise
     let star_mass = 2000000000.0;
     let max_distance = 500;
-    let max_mass = 1000;
-    let amount = 3000;
+    let max_mass = 3000;
+    let amount = 10000;
 
-    let center_x = -125.0; // -250.0;
+    let center_x = -500.0; // -250.0;
     let center_y = 0.0;
     let base_vx = 0.0;
     let base_vy = 0.0;
@@ -209,13 +208,13 @@ fn add_particles(mut commands: Commands) {
         direction,
     );
 
-    let direction = -1.0; // anti-clockwise
+    let direction = 1.0; // anti-clockwise
     let star_mass = 1000000000.0;
     let max_distance = 500;
-    let max_mass = 500;
-    let amount = 3000;
+    let max_mass = 3000;
+    // let amount = 1000;
 
-    let center_x = 1000.0;
+    let center_x = 500.0;
     let center_y = 0.0;
     let base_vx = 0.0;
     let base_vy = 0.0;
@@ -339,7 +338,7 @@ fn apply_forces(
     }
     _span2.exit();
 
-    query.par_for_each_mut(&pool, 64, |mut p2| {
+    query.par_for_each_mut(&pool, 12, |mut p2| {
         let mut fx_p2: f64 = 0.0;
         let mut fy_p2: f64 = 0.0;
         for p1 in &massive_objects {
@@ -407,31 +406,31 @@ fn apply_forces(
 
     for p1idx in 0..massive_objects.len() {
         let (p1, particles) = massive_objects.split_one_mut(p1idx);
+        let mut fx_p1: f64 = 0.0;
+        let mut fy_p1: f64 = 0.0;
         for p2 in particles {
             
             let distance = p1.distance2_to(&p2);
             let _span_parent = info_span!("particle_1").entered();
             // p2
-            let mut fx_p1: f64 = 0.0;
-            let mut fy_p1: f64 = 0.0;
             let (t_fx_p1, t_fy_p1) = p1.force_from(&p2, Some(distance));
 
             {
                 let _span = info_span!("sum_forces").entered();
                 fx_p1 += t_fx_p1;
                 fy_p1 += t_fy_p1;
-
-                let _span1 = info_span!("apply_velocities").entered();
-                p1.vx += (fx_p1 / p1.mass) * dt;
-                p1.vy += (fy_p1 / p1.mass) * dt;
-                _span1.exit();
-
-                let _span1 = info_span!("apply_position").entered();
-                p1.x += p1.vx * dt;
-                p1.y += p1.vy * dt;
-                _span1.exit();
                 _span.exit();
             }
+
+            let _span1 = info_span!("apply_velocities").entered();
+            p1.vx += (fx_p1 / p1.mass) * dt;
+            p1.vy += (fy_p1 / p1.mass) * dt;
+            _span1.exit();
+
+            let _span1 = info_span!("apply_position").entered();
+            p1.x += p1.vx * dt;
+            p1.y += p1.vy * dt;
+            _span1.exit();
             _span_parent.exit();
         }
     }
@@ -449,16 +448,27 @@ fn massive_objects_manager(mut commands: Commands, query: Query<(Entity, &mut Pa
     })
 }
 
-fn collision_manager(mut commands: Commands, query: Query<(Entity, &Transform), With<MassiveObjects>>, mut query2: Query<&mut Particle, With<MassiveObjects>>, treeaccess: Res<NNTree>) {
+fn collision_manager(mut commands: Commands, query: Query<(Entity, &Transform), With<MassiveObjects>>, mut query2: Query<&mut Particle>, treeaccess: Res<NNTree>) {
     for (entity, transform) in query.iter() {
         let radius = {
             let p1: Particle = match query2.get(entity) {
                 Ok(e) => *e,
                 Err(_) => continue
             };
-            p1.radius() * 1.10
+            
+            // let span = info_span!("mass_check").entered();
+            // if p1.mass > 10000.0 {
+            //     commands.entity(entity).insert(MassiveObjects);
+            // } else {
+            //     commands.entity(entity).remove::<MassiveObjects>();
+            // }
+            // span.exit();
+            
+            p1.radius() * 1.20
         };
+
         
+        let span = info_span!("check_tree").entered();
         for (_, entity2) in treeaccess.within_distance(transform.translation, radius as f32) {
             let [p1, p2] = match query2.get_many_mut([entity, entity2]) {
                 Ok(e) => e,
@@ -473,24 +483,22 @@ fn collision_manager(mut commands: Commands, query: Query<(Entity, &Transform), 
                     continue
                 }
 
-                let distance = p1.distance_to(&p2);
-                if distance < (p1.radius() + p2.radius()) / 2.0 {
-                    // Combine
-                    commands.entity(entity2).despawn();
+                // Combine
+                commands.entity(entity2).despawn();
 
-                    let momentum_x = p1.mass * p1.vx + p2.mass * p2.vx * 0.75; // assume some energy lost;
-                    let momentum_y = p1.mass * p1.vy + p2.mass * p2.vy * 0.75; // assume some energy lost;
+                let momentum_x = p1.mass * p1.vx + p2.mass * p2.vx * 0.75; // assume some energy lost;
+                let momentum_y = p1.mass * p1.vy + p2.mass * p2.vy * 0.75; // assume some energy lost;
 
-                    // if p2.color == YELLOW || p1.color == YELLOW {
-                    //     p1.color = YELLOW;
-                    // }
+                // if p2.color == YELLOW || p1.color == YELLOW {
+                //     p1.color = YELLOW;
+                // }
 
-                    p1.mass += p2.mass;
-                    p1.vx = momentum_x / p1.mass;
-                    p1.vy = momentum_y / p1.mass;
-                }
+                p1.mass += p2.mass;
+                p1.vx = momentum_x / p1.mass;
+                p1.vy = momentum_y / p1.mass;
             }
         }
+        span.exit();
     }
 }
 
