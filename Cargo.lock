@@ -625,6 +625,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevy_spatial"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d221fe08e96ca84cdfeb622b151fb6e3dd3ba7a5307082d1a078ebea6f3de63"
+dependencies = [
+ "bevy",
+ "kd-tree",
+ "num-traits",
+ "typenum",
+]
+
+[[package]]
 name = "bevy_sprite"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1751,6 +1763,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "kd-tree"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ae4f4af33b7d5c128b3f989401075175e18b5de122891060556e048df5f07ca"
+dependencies = [
+ "num-traits",
+ "ordered-float",
+ "paste",
+ "pdqselect",
+ "typenum",
+]
+
+[[package]]
 name = "khronos-egl"
 version = "4.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2010,6 +2035,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_prototype_lyon",
+ "bevy_spatial",
  "rand",
 ]
 
@@ -2315,6 +2341,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7709cef83f0c1f58f666e746a08b21e0085f7440fa6a29cc194d68aac97a4225"
 
 [[package]]
+name = "ordered-float"
+version = "2.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7940cf2ca942593318d07fcf2596cdca60a85c9e7fab408a5e21a4f9dcd40d87"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "owned_ttf_parser"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2353,6 +2388,18 @@ dependencies = [
  "smallvec",
  "winapi",
 ]
+
+[[package]]
+name = "paste"
+version = "1.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c520e05135d6e763148b6426a837e239041653ba7becd2e538c076c738025fc"
+
+[[package]]
+name = "pdqselect"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7778906d9321dd56cde1d1ffa69a73e59dcf5fda6d366f62727adf2bd4193aee"
 
 [[package]]
 name = "peeking_take_while"
@@ -2972,6 +3019,12 @@ name = "ttf-parser"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c74c96594835e10fa545e2a51e8709f30b173a092bfd6036ef2cec53376244f3"
+
+[[package]]
+name = "typenum"
+version = "1.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dcf81ac59edc17cc8697ff311e8f5ef2d99fcbd9817b34cec66f90b6c3dfd987"
 
 [[package]]
 name = "unicode-ident"

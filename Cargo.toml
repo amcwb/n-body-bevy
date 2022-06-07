@@ -10,6 +10,7 @@ edition = "2021"
 bevy = { version = "0.7.0" }
 bevy_prototype_lyon = "0.5.0"
 rand = "0.8.3"
+bevy_spatial = { version = "0.1.0", features=["kdtree"] }
 
 [profile.release]
 debug = 1

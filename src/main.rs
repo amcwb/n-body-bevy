@@ -6,6 +6,7 @@ use bevy::{
 use bevy_prototype_lyon::prelude::*;
 use rand::{distributions::Uniform, prelude::Distribution, Rng};
 // use directx_math::XMScalarSinCos;
+use bevy_spatial::{KDTreeAccess2D, KDTreePlugin2D, SpatialAccess};
 
 type ImplIteratorMut<'a, Item> =
     ::std::iter::Chain<::std::slice::IterMut<'a, Item>, ::std::slice::IterMut<'a, Item>>;
@@ -30,7 +31,7 @@ impl<T> SplitOneMut for [T] {
         (&mut current[0], prev.iter_mut().chain(end))
     }
 }
-#[derive(Component)]
+#[derive(Component, Copy, Clone)]
 struct Particle {
     mass: f64,
     x: f64,
@@ -45,6 +46,9 @@ struct TimeScale(f64);
 #[derive(Component)]
 struct MassiveObjects;
 
+
+// type alias for easier usage later
+type NNTree = KDTreeAccess2D<Particle>;
 
 const GRAVITY: f64 = 0.000000000066742 * 1000.0;
 impl Particle {
@@ -112,7 +116,7 @@ fn camera_control(
     keys: Res<Input<KeyCode>>,
     time: Res<Time>,
     mut timescale: ResMut<TimeScale>,
-    mut query: Query<&mut OrthographicProjection>,
+    mut query: Query<(&mut Transform, &mut OrthographicProjection)>,
 ) {
     let dist = 1.0 * time.delta().as_secs_f32();
     let mut scroll_y = 0.0;
@@ -120,21 +124,34 @@ fn camera_control(
         match ev.unit {
             MouseScrollUnit::Line => {
                 // println!("Scroll (line units): vertical: {}, horizontal: {}", ev.y, ev.x);
-                scroll_y += ev.y
+                scroll_y -= ev.y
             }
             MouseScrollUnit::Pixel => {
                 // println!("Scroll (pixel units): vertical: {}, horizontal: {}", ev.y, ev.x);
-                scroll_y += ev.y
+                scroll_y -= ev.y
             }
         }
     }
 
-    for mut projection in query.iter_mut() {
+    for (mut transform, mut projection) in query.iter_mut() {
+        let mut transform: Mut<Transform> = transform;
         let mut log_scale = projection.scale.ln();
 
         log_scale += scroll_y * dist;
 
         projection.scale = log_scale.exp();
+        if keys.pressed(KeyCode::A) {
+            transform.translation.x -= 100.0 * projection.scale * time.delta().as_secs_f32();
+        }
+        if keys.pressed(KeyCode::D) {
+            transform.translation.x += 100.0 * projection.scale * time.delta().as_secs_f32();
+        }
+        if keys.pressed(KeyCode::S) {
+            transform.translation.y -= 100.0 * projection.scale * time.delta().as_secs_f32();
+        }
+        if keys.pressed(KeyCode::W) {
+            transform.translation.y += 100.0 * projection.scale * time.delta().as_secs_f32();
+        }
     }
 
     if keys.pressed(KeyCode::Z) {
@@ -156,21 +173,23 @@ fn main() {
         .insert_resource(ClearColor(Color::rgb(0.0, 0.0, 0.0)))
         .add_plugins(DefaultPlugins)
         .add_plugin(ShapePlugin)
+        .add_plugin(KDTreePlugin2D::<Particle> { ..default() })
         .add_startup_system(setup_camera)
         .add_startup_system(add_particles)
         .add_system(apply_forces)
         .add_system(transform_objects)
         .add_system(camera_control)
         .add_system(massive_objects_manager)
+        .add_system(collision_manager)
         .run();
 }
 
 fn add_particles(mut commands: Commands) {
     let direction = 1.0; // clockwise
     let star_mass = 2000000000.0;
-    let max_distance = 5000;
+    let max_distance = 500;
     let max_mass = 1000;
-    let amount = 10000;
+    let amount = 1000;
 
     let center_x = -125.0; // -250.0;
     let center_y = 0.0;
@@ -196,10 +215,10 @@ fn add_particles(mut commands: Commands) {
     // let max_mass = 500;
     // let amount = 10000;
 
-    // let center_x = 125.0;
+    // let center_x = 1000.0;
     // let center_y = 0.0;
     // let base_vx = 0.0;
-    // let base_vy = 0.01633915542;
+    // let base_vy = 0.0;
 
     // create_system(
     //     &mut commands,
@@ -307,22 +326,22 @@ fn apply_forces(
     time: Res<Time>,
     pool: Res<AsyncComputeTaskPool>,
     mut query: Query<&mut Particle, Without<MassiveObjects>>,
-    massive_query: Query<&Particle, With<MassiveObjects>>
+    mut massive_query: Query<&mut Particle, With<MassiveObjects>>
 ) {
     let dt = time.delta_seconds() as f64 * timescale.0;
     let _span_all = info_span!("apply_forces").entered();
-    let mut massive_objects: Vec<&Particle> = vec![];
+    let mut massive_objects: Vec<Mut<Particle>> = vec![];
 
     // trusts that not many massive objects will be present
     let _span2 = info_span!("collect massive objs").entered();
-    for particle in massive_query.iter() {
+    for particle in massive_query.iter_mut() {
         massive_objects.push(particle);
     }
     _span2.exit();
 
     query.par_for_each_mut(&pool, 64, |mut p2| {
         for p1 in &massive_objects {
-            if *p1 == p2.as_ref() {
+            if p1.as_ref() == p2.as_ref() {
                 return;
             }
 
@@ -386,6 +405,37 @@ fn apply_forces(
         }
     });
 
+    for p1idx in 0..massive_objects.len() {
+        let (p1, particles) = massive_objects.split_one_mut(p1idx);
+        for p2 in particles {
+            
+            let distance = p1.distance2_to(&p2);
+            let _span_parent = info_span!("particle_1").entered();
+            // p2
+            let mut fx_p1: f64 = 0.0;
+            let mut fy_p1: f64 = 0.0;
+            let (t_fx_p1, t_fy_p1) = p1.force_from(&p2, Some(distance));
+
+            {
+                let _span = info_span!("sum_forces").entered();
+                fx_p1 += t_fx_p1;
+                fy_p1 += t_fy_p1;
+
+                let _span1 = info_span!("apply_velocities").entered();
+                p1.vx += (fx_p1 / p1.mass) * dt;
+                p1.vy += (fy_p1 / p1.mass) * dt;
+                _span1.exit();
+
+                let _span1 = info_span!("apply_position").entered();
+                p1.x += p1.vx * dt;
+                p1.y += p1.vy * dt;
+                _span1.exit();
+                _span.exit();
+            }
+            _span_parent.exit();
+        }
+    }
+
     _span_all.exit();
 }
 
@@ -399,6 +449,43 @@ fn massive_objects_manager(mut commands: Commands, query: Query<(Entity, &mut Pa
     })
 }
 
+fn collision_manager(mut commands: Commands, query: Query<(Entity, &Transform)>, mut query2: Query<&mut Particle>, treeaccess: Res<NNTree>) {
+    for (entity2, transform) in query.iter() {
+        let p2: Particle = match query2.get(entity2) {
+            Ok(e) => *e,
+            Err(_) => continue
+        };
+        let p2 = p2.clone();
+        for (_, entity) in treeaccess.within_distance(transform.translation, p2.radius() as f32) {
+            let mut p1: Mut<Particle> = query2.get_mut(entity2).unwrap();
+
+            
+            // if p1.mass > 50.0 || p2.mass > 50.0 {
+            if true {
+                if p1.mass > p2.mass {
+                    continue
+                }
+
+                let distance = p1.distance_to(&p2);
+                if distance < (p1.radius() + p2.radius()) / 2.0 {
+                    // Combine
+                    commands.entity(entity2).despawn();
+
+                    let momentum_x = p1.mass * p1.vx + p2.mass * p2.vx * 0.75; // assume some energy lost;
+                    let momentum_y = p1.mass * p1.vy + p2.mass * p2.vy * 0.75; // assume some energy lost;
+
+                    // if p2.color == YELLOW || p1.color == YELLOW {
+                    //     p1.color = YELLOW;
+                    // }
+
+                    p1.mass += p2.mass;
+                    p1.vx = momentum_x / p1.mass;
+                    p1.vy = momentum_y / p1.mass;
+                }
+            }
+        }
+    }
+}
 
 fn transform_objects(mut query: Query<(&mut Particle, &mut Transform)>) {
     for (particle, transform) in query.iter_mut() {
