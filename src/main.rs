@@ -179,7 +179,7 @@ fn main() {
         .add_system(apply_forces)
         .add_system(transform_objects)
         .add_system(camera_control)
-        .add_system(massive_objects_manager)
+        .add_system(massive_objects_manager.after(collision_manager))
         .add_system(collision_manager)
         .run();
 }
@@ -450,19 +450,26 @@ fn massive_objects_manager(mut commands: Commands, query: Query<(Entity, &mut Pa
 }
 
 fn collision_manager(mut commands: Commands, query: Query<(Entity, &Transform)>, mut query2: Query<&mut Particle>, treeaccess: Res<NNTree>) {
-    for (entity2, transform) in query.iter() {
-        let p2: Particle = match query2.get(entity2) {
-            Ok(e) => *e,
-            Err(_) => continue
+    for (entity, transform) in query.iter() {
+        let radius = {
+            let p1: Particle = match query2.get(entity) {
+                Ok(e) => *e,
+                Err(_) => continue
+            };
+            p1.radius()
         };
-        let p2 = p2.clone();
-        for (_, entity) in treeaccess.within_distance(transform.translation, p2.radius() as f32) {
-            let mut p1: Mut<Particle> = query2.get_mut(entity2).unwrap();
-
+        
+        for (_, entity2) in treeaccess.within_distance(transform.translation, radius as f32) {
+            let [p1, p2] = match query2.get_many_mut([entity, entity2]) {
+                Ok(e) => e,
+                Err(_) => continue
+            };
+            let mut p1: Mut<Particle> = p1;
+            let p2: Mut<Particle> = p2;
             
             // if p1.mass > 50.0 || p2.mass > 50.0 {
             if true {
-                if p1.mass > p2.mass {
+                if p2.mass > p1.mass {
                     continue
                 }
 
