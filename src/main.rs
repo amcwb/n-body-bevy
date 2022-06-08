@@ -6,7 +6,7 @@ use bevy::{
 use bevy_prototype_lyon::prelude::*;
 use rand::{distributions::Uniform, prelude::Distribution, Rng};
 // use directx_math::XMScalarSinCos;
-use bevy_spatial::{KDTreeAccess2D, KDTreePlugin2D, SpatialAccess};
+use bevy_spatial::{EfficientInsertParams, RTreeAccess3D, RTreePlugin3D, SpatialAccess};
 
 type ImplIteratorMut<'a, Item> =
     ::std::iter::Chain<::std::slice::IterMut<'a, Item>, ::std::slice::IterMut<'a, Item>>;
@@ -36,8 +36,10 @@ struct Particle {
     mass: f64,
     x: f64,
     y: f64,
+    z: f64,
     vx: f64,
     vy: f64,
+    vz: f64
 }
 
 #[derive(Component)]
@@ -47,30 +49,32 @@ struct TimeScale(f64);
 struct MassiveObjects;
 
 // type alias for easier usage later
-type NNTree = KDTreeAccess2D<Particle>;
+type NNTree = RTreeAccess3D<Particle, EfficientInsertParams>;
 
 const GRAVITY: f64 = 0.000000000066742 * 1000.0;
 impl Particle {
-    fn force_from(&self, other: &Particle, distance2: Option<f64>) -> (f64, f64) {
+    fn force_from(&self, other: &Particle, distance2: Option<f64>) -> (f64, f64, f64) {
         let _span = info_span!("calculate_force_from").entered();
         let distance2 = match distance2 {
             Some(e) => e,
             None => self.distance2_to(other),
         };
+
+        let d_sqrt = distance2.sqrt();
         let _span2 = info_span!("calculate_force").entered();
         let f = (GRAVITY * self.mass * other.mass) / distance2;
         _span2.exit();
         let _span2 = info_span!("calculate_atan").entered();
-        let theta = (other.y - self.y).atan2(other.x - self.x);
         _span2.exit();
 
-        // let mut cos: f32 = 0.0;
-        // let mut sin: f32 = 0.0;
-        // XMScalarSinCos(&mut sin, &mut cos, theta as f32);
-        let fx = theta.cos() * f;
-        let fy = theta.sin() * f;
+        let dx = other.x - self.x;
+        let dy = other.y - self.y;
+        let dz = other.z - self.z;
+        let fx = dx / d_sqrt * f;
+        let fy = dy / d_sqrt * f;
+        let fz = dz / d_sqrt * f;
 
-        let res = (fx, fy);
+        let res = (fx, fy, fz);
         _span.exit();
         res
     }
@@ -84,7 +88,7 @@ impl Particle {
 
     fn distance2_to(&self, other: &Particle) -> f64 {
         let _span = info_span!("calculate_distance2").entered();
-        let res = (other.x - self.x).powi(2) + (other.y - self.y).powi(2);
+        let res = (other.x - self.x).powi(2) + (other.y - self.y).powi(2) + (other.z - self.z).powi(2);
         _span.exit();
         res
     }
@@ -106,7 +110,7 @@ impl PartialEq for Particle {
 }
 
 fn setup_camera(mut commands: Commands) {
-    commands.spawn_bundle(OrthographicCameraBundle::new_2d());
+    // commands.spawn_bundle(OrthographicCameraBundle::new_3d());
     commands.insert_resource(TimeScale(1.0));
 }
 
@@ -115,7 +119,7 @@ fn camera_control(
     keys: Res<Input<KeyCode>>,
     time: Res<Time>,
     mut timescale: ResMut<TimeScale>,
-    mut query: Query<(&mut Transform, &mut OrthographicProjection)>,
+    mut query: Query<&mut Transform, With<PerspectiveProjection>>,
 ) {
     let dist = 1.0 * time.delta().as_secs_f32();
     let mut scroll_y = 0.0;
@@ -132,32 +136,27 @@ fn camera_control(
         }
     }
 
-    for (mut transform, mut projection) in query.iter_mut() {
+    for mut transform in query.iter_mut() {
         let mut transform: Mut<Transform> = transform;
-        let mut log_scale = projection.scale.ln();
-
-        log_scale += scroll_y * dist;
-
-        projection.scale = log_scale.exp();
-        if keys.pressed(KeyCode::A) {
-            transform.translation.x -= 100.0 * projection.scale * time.delta().as_secs_f32();
-        }
-        if keys.pressed(KeyCode::D) {
-            transform.translation.x += 100.0 * projection.scale * time.delta().as_secs_f32();
-        }
-        if keys.pressed(KeyCode::S) {
-            transform.translation.y -= 100.0 * projection.scale * time.delta().as_secs_f32();
-        }
-        if keys.pressed(KeyCode::W) {
-            transform.translation.y += 100.0 * projection.scale * time.delta().as_secs_f32();
-        }
+        // if keys.pressed(KeyCode::A) {
+        //     transform.translation.x -= 100.0 * projection.scale * time.delta().as_secs_f32();
+        // }
+        // if keys.pressed(KeyCode::D) {
+        //     transform.translation.x += 100.0 * projection.scale * time.delta().as_secs_f32();
+        // }
+        // if keys.pressed(KeyCode::S) {
+        //     transform.translation.y -= 100.0 * projection.scale * time.delta().as_secs_f32();
+        // }
+        // if keys.pressed(KeyCode::W) {
+        //     transform.translation.y += 100.0 * projection.scale * time.delta().as_secs_f32();
+        // }
     }
 
     if keys.pressed(KeyCode::Z) {
-        timescale.0 = timescale.0 / 1.5;
+        timescale.0 = timescale.0 / 1.02;
     }
     if keys.pressed(KeyCode::X) {
-        timescale.0 = timescale.0 * 1.5;
+        timescale.0 = timescale.0 * 1.02;
     }
 }
 
@@ -172,7 +171,9 @@ fn main() {
         .insert_resource(ClearColor(Color::rgb(0.0, 0.0, 0.0)))
         .add_plugins(DefaultPlugins)
         .add_plugin(ShapePlugin)
-        .add_plugin(KDTreePlugin2D::<Particle> { ..default() })
+        .add_plugin(
+            RTreePlugin3D::<Particle, EfficientInsertParams> { ..default() },
+        )
         .add_startup_system(setup_camera)
         .add_startup_system(add_particles)
         .add_system(apply_forces)
@@ -183,64 +184,106 @@ fn main() {
         .run();
 }
 
-fn add_particles(mut commands: Commands) {
+fn add_particles(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
     let direction = 1.0; // clockwise
     let star_mass = 2000000000.0;
-    let max_distance = 500;
+    let max_distance = 5000;
     let max_mass = 3000;
-    let amount = 10000;
+    let amount = 100000;
 
-    let center_x = -500.0; // -250.0;
+    let center_x = 0.0; // -250.0;
     let center_y = 0.0;
+    let center_z = 0.0;
     let base_vx = 0.0;
     let base_vy = 0.0;
+    let base_vz = 0.0;
 
     create_system(
         &mut commands,
+        &mut meshes,
+        &mut materials,
         max_distance,
         max_mass,
         center_x,
         center_y,
+        center_z,
         base_vx,
         base_vy,
+        base_vz,
         star_mass,
         amount,
         direction,
     );
 
-    let direction = 1.0; // anti-clockwise
-    let star_mass = 1000000000.0;
-    let max_distance = 500;
-    let max_mass = 3000;
+    // let direction = 1.0; // clockwise
+    // let star_mass = 2000000000.0;
+    // let max_distance = 500;
+    // let max_mass = 3000;
     // let amount = 1000;
 
-    let center_x = 500.0;
-    let center_y = 0.0;
-    let base_vx = 0.0;
-    let base_vy = 0.0;
+    // let center_x = -250.0; // -250.0;
+    // let center_y = -100.0;
+    // let center_z = -200.0;
+    // let base_vx = 0.0;
+    // let base_vy = 0.0;
+    // let base_vz = 0.0;
 
-    create_system(
-        &mut commands,
-        max_distance,
-        max_mass,
-        center_x,
-        center_y,
-        base_vx,
-        base_vy,
-        star_mass,
-        amount,
-        direction,
-    );
+    // create_system(
+    //     &mut commands,
+    //     &mut meshes,
+    //     &mut materials,
+    //     max_distance,
+    //     max_mass,
+    //     center_x,
+    //     center_y,
+    //     center_z,
+    //     base_vx,
+    //     base_vy,
+    //     base_vz,
+    //     star_mass,
+    //     amount,
+    //     direction,
+    // );
+
+    // base camera
+    commands.spawn_bundle(PerspectiveCameraBundle {
+        transform: Transform::from_xyz(-2000.0, -2000.0, -2000.0).looking_at(Vec3::ZERO, Vec3::Y),
+        ..default()
+    });
+    commands.spawn_bundle(PointLightBundle {
+        point_light: PointLight {
+            intensity: 10000.0,
+            shadows_enabled: false,
+            range: 10000.0,
+            ..default()
+        },
+        transform: Transform::from_xyz(-10.0, -10.0, -10.0),
+        ..default()
+    });
+    commands.spawn_bundle(PointLightBundle {
+        point_light: PointLight {
+            intensity: 10000.0,
+            shadows_enabled: false,
+            range: 10000.0,
+            ..default()
+        },
+        transform: Transform::from_xyz(-10.0, -10.0, -100.0),
+        ..default()
+    });
 }
 
 fn create_system(
     mut commands: &mut Commands,
+    mut meshes: &mut ResMut<Assets<Mesh>>,
+    mut materials: &mut ResMut<Assets<StandardMaterial>>,
     max_distance: i32,
     max_mass: i32,
     center_x: f64,
     center_y: f64,
+    center_z: f64,
     base_vx: f64,
     base_vy: f64,
+    base_vz: f64,
     star_mass: f64,
     amount: i32,
     direction: f64,
@@ -251,10 +294,14 @@ fn create_system(
 
     create_star(
         &mut commands,
+        &mut meshes,
+        &mut materials,
         center_x,
         center_y,
+        center_z,
         base_vx,
         base_vy,
+        base_vz,
         star_mass,
         rng.gen::<f32>(),
         rng.gen::<f32>(),
@@ -270,16 +317,22 @@ fn create_system(
 
         let v_x = base_vx + theta.sin() * v * direction;
         let v_y = base_vy + theta.cos() * v * direction;
+        let v_z = base_vz + 0.0;
 
         let r_x = center_x + theta.cos() * r;
         let r_y = center_y + -theta.sin() * r;
+        let r_z = center_z;
 
         create_star(
             &mut commands,
+            &mut meshes,
+            &mut materials,
             r_x,
             r_y,
+            r_z,
             v_x,
             v_y,
+            v_z,
             m,
             rng.gen::<f32>(),
             rng.gen::<f32>(),
@@ -290,30 +343,33 @@ fn create_system(
 
 fn create_star<'a>(
     commands: &'a mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
     x: f64,
     y: f64,
+    z: f64,
     vx: f64,
     vy: f64,
+    vz: f64,
     mass: f64,
     r: f32,
     g: f32,
     b: f32,
 ) {
-    let shape = shapes::Circle {
-        radius: (mass.log10()) as f32,
-        ..shapes::Circle::default()
-    };
-    
+    // let shape = shapes::Circle {
+    //     radius: (mass.log10()) as f32,
+    //     ..shapes::Circle::default()
+    // };
+    let material = materials.add(Color::rgb(r, g, b).into());
+    let mesh = meshes.add(Mesh::from(
+        shape::Icosphere { subdivisions: 4, radius: (mass.log10()) as f32 },
+    ));
     commands
-        .spawn_bundle(GeometryBuilder::build_as(
-            &shape,
-            DrawMode::Outlined {
-                fill_mode: FillMode::color(Color::rgb(r, g, b)),
-                outline_mode: StrokeMode::new(Color::WHITE, 0.5),
-            },
-            Transform::default(),
-        ))
-        .insert(Particle { mass, x, y, vx, vy });
+        .spawn_bundle(PbrBundle {
+            mesh, material, ..default()
+        })
+        .insert(Transform { ..default() })
+        .insert(Particle { mass, x, y, z, vx, vy, vz });
 
     // if mass > 10_000.0 {
     //     commands.entity(id).insert(MassiveObjects);
@@ -341,6 +397,7 @@ fn apply_forces(
     query.par_for_each_mut(&pool, 12, |mut p2| {
         let mut fx_p2: f64 = 0.0;
         let mut fy_p2: f64 = 0.0;
+        let mut fz_p2: f64 = 0.0;
         for p1 in &massive_objects {
             if p1.as_ref() == p2.as_ref() {
                 return;
@@ -382,11 +439,12 @@ fn apply_forces(
             let distance = p1.distance2_to(&p2);
             let _span_parent = info_span!("particle_1").entered();
             // p2
-            let (t_fx_p2, t_fy_p2) = p2.force_from(&p1, Some(distance));
+            let (t_fx_p2, t_fy_p2, t_fz_p2) = p2.force_from(&p1, Some(distance));
             {
                 let _span = info_span!("sum_forces").entered();
                 fx_p2 += t_fx_p2;
                 fy_p2 += t_fy_p2;
+                fz_p2 += t_fz_p2;
                 _span.exit();
 
             }
@@ -396,11 +454,13 @@ fn apply_forces(
         let _span2 = info_span!("apply_velocities").entered();
         p2.vx += (fx_p2 / p2.mass) * dt;
         p2.vy += (fy_p2 / p2.mass) * dt;
+        p2.vz += (fz_p2 / p2.mass) * dt;
         _span2.exit();
 
         let _span2 = info_span!("apply_position").entered();
         p2.x += p2.vx * dt;
         p2.y += p2.vy * dt;
+        p2.z += p2.vz * dt;
         _span2.exit();
     });
 
@@ -408,28 +468,32 @@ fn apply_forces(
         let (p1, particles) = massive_objects.split_one_mut(p1idx);
         let mut fx_p1: f64 = 0.0;
         let mut fy_p1: f64 = 0.0;
+        let mut fz_p1: f64 = 0.0;
         for p2 in particles {
             
             let distance = p1.distance2_to(&p2);
             let _span_parent = info_span!("particle_1").entered();
             // p2
-            let (t_fx_p1, t_fy_p1) = p1.force_from(&p2, Some(distance));
+            let (t_fx_p1, t_fy_p1, t_fz_p1) = p1.force_from(&p2, Some(distance));
 
             {
                 let _span = info_span!("sum_forces").entered();
                 fx_p1 += t_fx_p1;
                 fy_p1 += t_fy_p1;
+                fz_p1 += t_fz_p1;
                 _span.exit();
             }
 
             let _span1 = info_span!("apply_velocities").entered();
             p1.vx += (fx_p1 / p1.mass) * dt;
             p1.vy += (fy_p1 / p1.mass) * dt;
+            p1.vz += (fz_p1 / p1.mass) * dt;
             _span1.exit();
 
             let _span1 = info_span!("apply_position").entered();
             p1.x += p1.vx * dt;
             p1.y += p1.vy * dt;
+            p1.z += p1.vz * dt;
             _span1.exit();
             _span_parent.exit();
         }
@@ -508,6 +572,6 @@ fn transform_objects(mut query: Query<(&mut Particle, &mut Transform)>) {
         let particle: Mut<Particle> = particle;
         let mut transform: Mut<Transform> = transform;
 
-        *transform = Transform::from_xyz(particle.x as f32, particle.y as f32, 0.0)
+        *transform = Transform::from_xyz(particle.x as f32, particle.y as f32, particle.z as f32)
     }
 }
