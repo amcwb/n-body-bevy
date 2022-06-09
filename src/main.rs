@@ -1,5 +1,5 @@
 use bevy::{
-    input::mouse::{MouseScrollUnit, MouseWheel},
+    input::mouse::{MouseScrollUnit, MouseWheel, MouseMotion},
     prelude::*,
     tasks::AsyncComputeTaskPool,
 };
@@ -30,6 +30,114 @@ impl<T> SplitOneMut for [T] {
         let (current, end) = current_and_end.split_at_mut(1);
         (&mut current[0], prev.iter_mut().chain(end))
     }
+}
+
+/// Tags an entity as capable of panning and orbiting.
+#[derive(Component)]
+struct PanOrbitCamera {
+    /// The "focus point" to orbit around. It is automatically updated when panning the camera
+    pub focus: Vec3,
+    pub radius: f32,
+    pub upside_down: bool,
+}
+
+impl Default for PanOrbitCamera {
+    fn default() -> Self {
+        PanOrbitCamera {
+            focus: Vec3::ZERO,
+            radius: 5.0,
+            upside_down: false,
+        }
+    }
+}
+
+/// Pan the camera with middle mouse click, zoom with scroll wheel, orbit with right mouse click.
+fn pan_orbit_camera(
+    windows: Res<Windows>,
+    mut ev_motion: EventReader<MouseMotion>,
+    mut ev_scroll: EventReader<MouseWheel>,
+    input_mouse: Res<Input<MouseButton>>,
+    mut query: Query<(&mut PanOrbitCamera, &mut Transform, &PerspectiveProjection)>,
+) {
+    // change input mapping for orbit and panning here
+    let orbit_button = MouseButton::Right;
+    let pan_button = MouseButton::Middle;
+
+    let mut pan = Vec2::ZERO;
+    let mut rotation_move = Vec2::ZERO;
+    let mut scroll = 0.0;
+    let mut orbit_button_changed = false;
+
+    if input_mouse.pressed(orbit_button) {
+        for ev in ev_motion.iter() {
+            rotation_move += ev.delta;
+        }
+    } else if input_mouse.pressed(pan_button) {
+        // Pan only if we're not rotating at the moment
+        for ev in ev_motion.iter() {
+            pan += ev.delta;
+        }
+    }
+    for ev in ev_scroll.iter() {
+        scroll += ev.y;
+    }
+    if input_mouse.just_released(orbit_button) || input_mouse.just_pressed(orbit_button) {
+        orbit_button_changed = true;
+    }
+
+    for (mut pan_orbit, mut transform, projection) in query.iter_mut() {
+        if orbit_button_changed {
+            // only check for upside down when orbiting started or ended this frame
+            // if the camera is "upside" down, panning horizontally would be inverted, so invert the input to make it correct
+            let up = transform.rotation * Vec3::Y;
+            pan_orbit.upside_down = up.y <= 0.0;
+        }
+
+        let mut any = false;
+        if rotation_move.length_squared() > 0.0 {
+            any = true;
+            let window = get_primary_window_size(&windows);
+            let delta_x = {
+                let delta = rotation_move.x / window.x * std::f32::consts::PI * 2.0;
+                if pan_orbit.upside_down { -delta } else { delta }
+            };
+            let delta_y = rotation_move.y / window.y * std::f32::consts::PI;
+            let yaw = Quat::from_rotation_y(-delta_x);
+            let pitch = Quat::from_rotation_x(-delta_y);
+            transform.rotation = yaw * transform.rotation; // rotate around global y axis
+            transform.rotation = transform.rotation * pitch; // rotate around local x axis
+        } else if pan.length_squared() > 0.0 {
+            any = true;
+            // make panning distance independent of resolution and FOV,
+            let window = get_primary_window_size(&windows);
+            pan *= Vec2::new(projection.fov * projection.aspect_ratio, projection.fov) / window;
+            // translate by local axes
+            let right = transform.rotation * Vec3::X * -pan.x;
+            let up = transform.rotation * Vec3::Y * pan.y;
+            // make panning proportional to distance away from focus point
+            let translation = (right + up) * pan_orbit.radius;
+            pan_orbit.focus += translation;
+        } else if scroll.abs() > 0.0 {
+            any = true;
+            pan_orbit.radius -= scroll * pan_orbit.radius * 0.2;
+            // dont allow zoom to reach zero or you get stuck
+            pan_orbit.radius = f32::max(pan_orbit.radius, 0.05);
+        }
+
+        if any {
+            // emulating parent/child to make the yaw/y-axis rotation behave like a turntable
+            // parent = x and y rotation
+            // child = z-offset
+            let rot_matrix = Mat3::from_quat(transform.rotation);
+            transform.translation = pan_orbit.focus + rot_matrix.mul_vec3(Vec3::new(0.0, 0.0, pan_orbit.radius));
+        }
+    }
+}
+
+fn get_primary_window_size(windows: &Res<Windows>) -> Vec2 {
+    let window = windows.get_primary().unwrap();
+    let window = Vec2::new(window.width() as f32, window.height() as f32);
+    window
 }
 #[derive(Component, Copy, Clone)]
 struct Particle {
@@ -118,45 +226,13 @@ fn camera_control(
     mut scroll_evr: EventReader<MouseWheel>,
     keys: Res<Input<KeyCode>>,
     time: Res<Time>,
-    mut timescale: ResMut<TimeScale>,
-    mut query: Query<&mut Transform, With<PerspectiveProjection>>,
+    mut timescale: ResMut<TimeScale>
 ) {
-    let dist = 1.0 * time.delta().as_secs_f32();
-    let mut scroll_y = 0.0;
-    for ev in scroll_evr.iter() {
-        match ev.unit {
-            MouseScrollUnit::Line => {
-                // println!("Scroll (line units): vertical: {}, horizontal: {}", ev.y, ev.x);
-                scroll_y -= ev.y
-            }
-            MouseScrollUnit::Pixel => {
-                // println!("Scroll (pixel units): vertical: {}, horizontal: {}", ev.y, ev.x);
-                scroll_y -= ev.y
-            }
-        }
-    }
-
-    for mut transform in query.iter_mut() {
-        let mut transform: Mut<Transform> = transform;
-        // if keys.pressed(KeyCode::A) {
-        //     transform.translation.x -= 100.0 * projection.scale * time.delta().as_secs_f32();
-        // }
-        // if keys.pressed(KeyCode::D) {
-        //     transform.translation.x += 100.0 * projection.scale * time.delta().as_secs_f32();
-        // }
-        // if keys.pressed(KeyCode::S) {
-        //     transform.translation.y -= 100.0 * projection.scale * time.delta().as_secs_f32();
-        // }
-        // if keys.pressed(KeyCode::W) {
-        //     transform.translation.y += 100.0 * projection.scale * time.delta().as_secs_f32();
-        // }
-    }
-
     if keys.pressed(KeyCode::Z) {
-        timescale.0 = timescale.0 / 1.02;
+        timescale.0 = timescale.0 / 1.5;
     }
     if keys.pressed(KeyCode::X) {
-        timescale.0 = timescale.0 * 1.02;
+        timescale.0 = timescale.0 * 1.5;
     }
 }
 
@@ -181,6 +257,7 @@ fn main() {
         .add_system(camera_control)
         .add_system(massive_objects_manager.before(collision_manager))
         .add_system(collision_manager)
+        .add_system(pan_orbit_camera)
         .run();
 }
 
@@ -189,7 +266,7 @@ fn add_particles(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut m
     let star_mass = 2000000000.0;
     let max_distance = 5000;
     let max_mass = 3000;
-    let amount = 100000;
+    let amount = 10000;
 
     let center_x = 0.0; // -250.0;
     let center_y = 0.0;
@@ -215,40 +292,76 @@ fn add_particles(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut m
         direction,
     );
 
-    // let direction = 1.0; // clockwise
-    // let star_mass = 2000000000.0;
-    // let max_distance = 500;
-    // let max_mass = 3000;
-    // let amount = 1000;
+    let direction = 1.0; // clockwise
+    let star_mass = 2000000000.0;
+    let max_distance = 5000;
+    let max_mass = 3000;
+    let amount = 1000;
 
-    // let center_x = -250.0; // -250.0;
-    // let center_y = -100.0;
-    // let center_z = -200.0;
-    // let base_vx = 0.0;
-    // let base_vy = 0.0;
-    // let base_vz = 0.0;
+    let center_x = 550.0; // -250.0;
+    let center_y = -100.0;
+    let center_z = -200.0;
+    let base_vx = 0.0;
+    let base_vy = 0.0;
+    let base_vz = 0.0;
 
-    // create_system(
-    //     &mut commands,
-    //     &mut meshes,
-    //     &mut materials,
-    //     max_distance,
-    //     max_mass,
-    //     center_x,
-    //     center_y,
-    //     center_z,
-    //     base_vx,
-    //     base_vy,
-    //     base_vz,
-    //     star_mass,
-    //     amount,
-    //     direction,
-    // );
+    create_system(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        max_distance,
+        max_mass,
+        center_x,
+        center_y,
+        center_z,
+        base_vx,
+        base_vy,
+        base_vz,
+        star_mass,
+        amount,
+        direction,
+    );
+
+    
+    let direction = 1.0; // clockwise
+    let star_mass = 2000000000.0;
+    let max_distance = 5000;
+    let max_mass = 3000;
+    let amount = 10000;
+
+    let center_x = 550.0; // -250.0;
+    let center_y = 500.0;
+    let center_z = 200.0;
+    let base_vx = 0.0;
+    let base_vy = 0.0;
+    let base_vz = 0.0;
+
+    create_system(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        max_distance,
+        max_mass,
+        center_x,
+        center_y,
+        center_z,
+        base_vx,
+        base_vy,
+        base_vz,
+        star_mass,
+        amount,
+        direction,
+    );
 
     // base camera
+    let translation = Vec3::new(-10.0, -10.0, -10.0);
+    let radius = translation.length();
     commands.spawn_bundle(PerspectiveCameraBundle {
-        transform: Transform::from_xyz(-2000.0, -2000.0, -2000.0).looking_at(Vec3::ZERO, Vec3::Y),
+        transform: Transform::from_translation(translation).looking_at(Vec3::ZERO, Vec3::Y),
         ..default()
+    }).insert(PanOrbitCamera {
+        radius,
+        ..Default::default()
     });
     commands.spawn_bundle(PointLightBundle {
         point_light: PointLight {
@@ -257,7 +370,7 @@ fn add_particles(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut m
             range: 10000.0,
             ..default()
         },
-        transform: Transform::from_xyz(-10.0, -10.0, -10.0),
+        transform: Transform::from_xyz(-0.0, -0.0, -0.0),
         ..default()
     });
     commands.spawn_bundle(PointLightBundle {
@@ -552,6 +665,7 @@ fn collision_manager(mut commands: Commands, query: Query<(Entity, &Transform), 
 
                 let momentum_x = p1.mass * p1.vx + p2.mass * p2.vx * 0.75; // assume some energy lost;
                 let momentum_y = p1.mass * p1.vy + p2.mass * p2.vy * 0.75; // assume some energy lost;
+                let momentum_z = p1.mass * p1.vz + p2.mass * p2.vz * 0.75; // assume some energy lost;
 
                 // if p2.color == YELLOW || p1.color == YELLOW {
                 //     p1.color = YELLOW;
@@ -560,6 +674,7 @@ fn collision_manager(mut commands: Commands, query: Query<(Entity, &Transform), 
                 p1.mass += p2.mass;
                 p1.vx = momentum_x / p1.mass;
                 p1.vy = momentum_y / p1.mass;
+                p1.vz = momentum_z / p1.mass;
             }
         }
         span.exit();
