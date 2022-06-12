@@ -1,12 +1,18 @@
+use std::os::raw::c_void;
+
 use bevy::{
     input::mouse::{MouseScrollUnit, MouseWheel, MouseMotion},
     prelude::*,
     tasks::AsyncComputeTaskPool,
 };
 use bevy_prototype_lyon::prelude::*;
+use glw::gl;
+use gpu::Particle;
 use rand::{distributions::Uniform, prelude::Distribution, Rng};
 // use directx_math::XMScalarSinCos;
 use bevy_spatial::{EfficientInsertParams, RTreeAccess3D, RTreePlugin3D, SpatialAccess};
+mod gpu;
+use fragile::Fragile;
 
 type ImplIteratorMut<'a, Item> =
     ::std::iter::Chain<::std::slice::IterMut<'a, Item>, ::std::slice::IterMut<'a, Item>>;
@@ -139,16 +145,6 @@ fn get_primary_window_size(windows: &Res<Windows>) -> Vec2 {
     let window = Vec2::new(window.width() as f32, window.height() as f32);
     window
 }
-#[derive(Component, Copy, Clone)]
-struct Particle {
-    mass: f64,
-    x: f64,
-    y: f64,
-    z: f64,
-    vx: f64,
-    vy: f64,
-    vz: f64
-}
 
 #[derive(Component)]
 struct TimeScale(f64);
@@ -245,6 +241,7 @@ fn main() {
             ..default()
         })
         .insert_resource(ClearColor(Color::rgb(0.0, 0.0, 0.0)))
+        .insert_resource(gpu::Application::new().unwrap())
         .add_plugins(DefaultPlugins)
         .add_plugin(ShapePlugin)
         .add_plugin(
@@ -266,7 +263,7 @@ fn add_particles(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut m
     let star_mass = 2000000000.0;
     let max_distance = 5000;
     let max_mass = 3000;
-    let amount = 10000;
+    let amount = 1000;
 
     let center_x = 0.0; // -250.0;
     let center_y = 0.0;
@@ -292,66 +289,66 @@ fn add_particles(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut m
         direction,
     );
 
-    let direction = 1.0; // clockwise
-    let star_mass = 2000000000.0;
-    let max_distance = 5000;
-    let max_mass = 3000;
-    let amount = 1000;
+    // let direction = 1.0; // clockwise
+    // let star_mass = 2000000000.0;
+    // let max_distance = 5000;
+    // let max_mass = 3000;
+    // let amount = 10000;
 
-    let center_x = 550.0; // -250.0;
-    let center_y = -100.0;
-    let center_z = -200.0;
-    let base_vx = 0.0;
-    let base_vy = 0.0;
-    let base_vz = 0.0;
+    // let center_x = 550.0; // -250.0;
+    // let center_y = -100.0;
+    // let center_z = -200.0;
+    // let base_vx = 0.0;
+    // let base_vy = 0.0;
+    // let base_vz = 0.0;
 
-    create_system(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        max_distance,
-        max_mass,
-        center_x,
-        center_y,
-        center_z,
-        base_vx,
-        base_vy,
-        base_vz,
-        star_mass,
-        amount,
-        direction,
-    );
+    // create_system(
+    //     &mut commands,
+    //     &mut meshes,
+    //     &mut materials,
+    //     max_distance,
+    //     max_mass,
+    //     center_x,
+    //     center_y,
+    //     center_z,
+    //     base_vx,
+    //     base_vy,
+    //     base_vz,
+    //     star_mass,
+    //     amount,
+    //     direction,
+    // );
 
     
-    let direction = 1.0; // clockwise
-    let star_mass = 2000000000.0;
-    let max_distance = 5000;
-    let max_mass = 3000;
-    let amount = 10000;
+    // let direction = 1.0; // clockwise
+    // let star_mass = 2000000000.0;
+    // let max_distance = 5000;
+    // let max_mass = 3000;
+    // let amount = 10000;
 
-    let center_x = 550.0; // -250.0;
-    let center_y = 500.0;
-    let center_z = 200.0;
-    let base_vx = 0.0;
-    let base_vy = 0.0;
-    let base_vz = 0.0;
+    // let center_x = 550.0; // -250.0;
+    // let center_y = 500.0;
+    // let center_z = 200.0;
+    // let base_vx = 0.0;
+    // let base_vy = 0.0;
+    // let base_vz = 0.0;
 
-    create_system(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        max_distance,
-        max_mass,
-        center_x,
-        center_y,
-        center_z,
-        base_vx,
-        base_vy,
-        base_vz,
-        star_mass,
-        amount,
-        direction,
-    );
+    // create_system(
+    //     &mut commands,
+    //     &mut meshes,
+    //     &mut materials,
+    //     max_distance,
+    //     max_mass,
+    //     center_x,
+    //     center_y,
+    //     center_z,
+    //     base_vx,
+    //     base_vy,
+    //     base_vz,
+    //     star_mass,
+    //     amount,
+    //     direction,
+    // );
 
     // base camera
     let translation = Vec3::new(-10.0, -10.0, -10.0);
@@ -493,126 +490,26 @@ fn apply_forces(
     timescale: Res<TimeScale>,
     time: Res<Time>,
     pool: Res<AsyncComputeTaskPool>,
-    mut query: Query<&mut Particle, Without<MassiveObjects>>,
-    mut massive_query: Query<&mut Particle, With<MassiveObjects>>
+    mut application: ResMut<gpu::Application>,
+    mut query: Query<&mut Particle>,
 ) {
     let dt = time.delta_seconds() as f64 * timescale.0;
-    let _span_all = info_span!("apply_forces").entered();
-    let mut massive_objects: Vec<Mut<Particle>> = vec![];
-
-    // trusts that not many massive objects will be present
-    let _span2 = info_span!("collect massive objs").entered();
-    for particle in massive_query.iter_mut() {
-        massive_objects.push(particle);
-    }
-    _span2.exit();
-
-    query.par_for_each_mut(&pool, 12, |mut p2| {
-        let mut fx_p2: f64 = 0.0;
-        let mut fy_p2: f64 = 0.0;
-        let mut fz_p2: f64 = 0.0;
-        for p1 in &massive_objects {
-            if p1.as_ref() == p2.as_ref() {
-                return;
-            }
-
-            // if p1.mass > 50.0 || p2.mass > 50.0 {
-            //     let target: &mut Particle;
-            //     let origin: &mut Particle;
-            //     let origin_entity: &Entity;
-
-            //     if p1.mass > p2.mass {
-            //         target = p1;
-            //         origin = p2.as_mut();
-            //         origin_entity = &entity2;
-            //     } else {
-            //         target = p2.as_mut();
-            //         origin = p1;
-            //         origin_entity = entity;
-            //     }
-
-            //     let distance = target.distance_to(origin);
-            //     if distance < (target.radius() + origin.radius()) / 2.0 {
-            //         // Combine
-            //         commands.entity(*origin_entity).despawn();
-
-            //         let momentum_x = target.mass * target.vx + origin.mass * origin.vx * 0.75; // assume some energy lost;
-            //         let momentum_y = target.mass * target.vy + origin.mass * origin.vy * 0.75; // assume some energy lost;
-
-            //         // if origin.color == YELLOW || target.color == YELLOW {
-            //         //     target.color = YELLOW;
-            //         // }
-
-            //         target.mass += origin.mass;
-            //         target.vx = momentum_x / target.mass;
-            //         target.vy = momentum_y / target.mass;
-            //     }
-            // }
-
-            let distance = p1.distance2_to(&p2);
-            let _span_parent = info_span!("particle_1").entered();
-            // p2
-            let (t_fx_p2, t_fy_p2, t_fz_p2) = p2.force_from(&p1, Some(distance));
-            {
-                let _span = info_span!("sum_forces").entered();
-                fx_p2 += t_fx_p2;
-                fy_p2 += t_fy_p2;
-                fz_p2 += t_fz_p2;
-                _span.exit();
-
-            }
-            _span_parent.exit();
-        }
-
-        let _span2 = info_span!("apply_velocities").entered();
-        p2.vx += (fx_p2 / p2.mass) * dt;
-        p2.vy += (fy_p2 / p2.mass) * dt;
-        p2.vz += (fz_p2 / p2.mass) * dt;
-        _span2.exit();
-
-        let _span2 = info_span!("apply_position").entered();
-        p2.x += p2.vx * dt;
-        p2.y += p2.vy * dt;
-        p2.z += p2.vz * dt;
-        _span2.exit();
+    let mut particles = Vec::<Particle>::new();
+    query.for_each(|particle| {
+        particles.push(*particle as Particle);
     });
 
-    for p1idx in 0..massive_objects.len() {
-        let (p1, particles) = massive_objects.split_one_mut(p1idx);
-        let mut fx_p1: f64 = 0.0;
-        let mut fy_p1: f64 = 0.0;
-        let mut fz_p1: f64 = 0.0;
-        for p2 in particles {
-            
-            let distance = p1.distance2_to(&p2);
-            let _span_parent = info_span!("particle_1").entered();
-            // p2
-            let (t_fx_p1, t_fy_p1, t_fz_p1) = p1.force_from(&p2, Some(distance));
-
-            {
-                let _span = info_span!("sum_forces").entered();
-                fx_p1 += t_fx_p1;
-                fy_p1 += t_fy_p1;
-                fz_p1 += t_fz_p1;
-                _span.exit();
-            }
-
-            let _span1 = info_span!("apply_velocities").entered();
-            p1.vx += (fx_p1 / p1.mass) * dt;
-            p1.vy += (fy_p1 / p1.mass) * dt;
-            p1.vz += (fz_p1 / p1.mass) * dt;
-            _span1.exit();
-
-            let _span1 = info_span!("apply_position").entered();
-            p1.x += p1.vx * dt;
-            p1.y += p1.vy * dt;
-            p1.z += p1.vz * dt;
-            _span1.exit();
-            _span_parent.exit();
-        }
+    let mut new_particles = match application.run(dt as f32, particles) {
+        Some(e) => e,
+        None => return
+    };
+    
+    for mut particle in query.iter_mut() {
+        *particle = match new_particles.pop() {
+            Some(e) => e,
+            None => continue
+        };
     }
-
-    _span_all.exit();
 }
 
 fn massive_objects_manager(mut commands: Commands, query: Query<(Entity, &mut Particle)>) {

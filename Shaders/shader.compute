@@ -1,0 +1,59 @@
+#version 440 
+// layout(local_size_x = 8 ,local_size_y = 8) in;
+
+struct Particle {
+    float x;
+    float y;
+    float z;
+    float vx;
+    float vy;
+    float vz;
+    float mass;
+};
+
+uniform float u_particle_count;
+uniform float u_dt;
+const float GRAVITY = 0.000000000066742;
+
+layout(shared, binding = 0) writeonly buffer OutputData
+{
+    Particle next[];
+};
+
+layout(shared, binding = 1) readonly buffer InputData
+{
+    Particle input_data[];
+};
+
+void main() {
+	uint index = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y;
+    Particle particle1 = input_data[index];
+    vec3 pos1 = vec3(particle1.x, particle1.y, particle1.z);
+    
+    vec3 directed_force = vec3(0.0, 0.0, 0.0);
+
+    for (int i = 0; i < u_particle_count; i++) {
+        if (i == index) continue;
+        Particle particle2 = input_data[i];
+        vec3 pos2 = vec3(particle2.x, particle2.y, particle2.z);
+
+        float d_sqrt = distance(pos1, pos2);
+        float raw_force = (GRAVITY * particle1.mass * particle2.mass) / (d_sqrt*d_sqrt);
+        vec3 d_axis = pos2 - pos1;
+        directed_force = directed_force + (d_axis / d_sqrt) * raw_force;
+    }
+
+    vec3 velocity = vec3(particle1.vx, particle1.vy, particle1.vz) + directed_force / particle1.mass * u_dt;
+    vec3 position = velocity * u_dt;
+
+    Particle new_particle;
+    new_particle.x = particle1.x + position.x;
+    new_particle.y = particle1.y + position.y;
+    new_particle.z = particle1.z + position.z;
+    new_particle.vx = velocity.x;
+    new_particle.vy = velocity.y;
+    new_particle.vz = velocity.z;
+    new_particle.mass = particle1.mass;
+    
+    next[index] = new_particle;
+}
