@@ -14,6 +14,7 @@ use bevy_spatial::{EfficientInsertParams, RTreeAccess3D, RTreePlugin3D, SpatialA
 mod gpu;
 use fragile::Fragile;
 
+const USE_3D: bool = true;
 type ImplIteratorMut<'a, Item> =
     ::std::iter::Chain<::std::slice::IterMut<'a, Item>, ::std::slice::IterMut<'a, Item>>;
 trait SplitOneMut {
@@ -65,6 +66,7 @@ fn pan_orbit_camera(
     input_mouse: Res<Input<MouseButton>>,
     mut query: Query<(&mut PanOrbitCamera, &mut Transform, &PerspectiveProjection)>,
 ) {
+    if !USE_3D { return };
     // change input mapping for orbit and panning here
     let orbit_button = MouseButton::Right;
     let pan_button = MouseButton::Middle;
@@ -155,9 +157,9 @@ struct MassiveObjects;
 // type alias for easier usage later
 type NNTree = RTreeAccess3D<Particle, EfficientInsertParams>;
 
-const GRAVITY: f64 = 0.000000000066742 * 1000.0;
+const GRAVITY: f32 = 0.000000000066742 * 1000.0;
 impl Particle {
-    fn force_from(&self, other: &Particle, distance2: Option<f64>) -> (f64, f64, f64) {
+    fn force_from(&self, other: &Particle, distance2: Option<f32>) -> (f32, f32, f32) {
         let _span = info_span!("calculate_force_from").entered();
         let distance2 = match distance2 {
             Some(e) => e,
@@ -183,21 +185,21 @@ impl Particle {
         res
     }
 
-    fn distance_to(&self, other: &Particle) -> f64 {
+    fn distance_to(&self, other: &Particle) -> f32 {
         let _span = info_span!("calculate_distance").entered();
         let res = self.distance2_to(other).sqrt();
         _span.exit();
         res
     }
 
-    fn distance2_to(&self, other: &Particle) -> f64 {
+    fn distance2_to(&self, other: &Particle) -> f32 {
         let _span = info_span!("calculate_distance2").entered();
         let res = (other.x - self.x).powi(2) + (other.y - self.y).powi(2) + (other.z - self.z).powi(2);
         _span.exit();
         res
     }
 
-    fn radius(&self) -> f64 {
+    fn radius(&self) -> f32 {
         self.mass.log10()
     }
 }
@@ -214,7 +216,39 @@ impl PartialEq for Particle {
 }
 
 fn setup_camera(mut commands: Commands) {
-    // commands.spawn_bundle(OrthographicCameraBundle::new_3d());
+    if USE_3D {    
+        let translation = Vec3::new(-10.0, -10.0, -10.0);
+        let radius = translation.length();
+        commands.spawn_bundle(PerspectiveCameraBundle {
+            transform: Transform::from_translation(translation).looking_at(Vec3::ZERO, Vec3::Y),
+            ..default()
+        }).insert(PanOrbitCamera {
+            radius,
+            ..Default::default()
+        });
+        commands.spawn_bundle(PointLightBundle {
+            point_light: PointLight {
+                intensity: 10000.0,
+                shadows_enabled: false,
+                range: 10000.0,
+                ..default()
+            },
+            transform: Transform::from_xyz(-0.0, -0.0, -0.0),
+            ..default()
+        });
+        commands.spawn_bundle(PointLightBundle {
+            point_light: PointLight {
+                intensity: 10000.0,
+                shadows_enabled: false,
+                range: 10000.0,
+                ..default()
+            },
+            transform: Transform::from_xyz(-10.0, -10.0, -100.0),
+            ..default()
+        });
+    } else {
+        commands.spawn_bundle(OrthographicCameraBundle::new_2d());
+    };
     commands.insert_resource(TimeScale(1.0));
 }
 
@@ -222,8 +256,49 @@ fn camera_control(
     mut scroll_evr: EventReader<MouseWheel>,
     keys: Res<Input<KeyCode>>,
     time: Res<Time>,
-    mut timescale: ResMut<TimeScale>
+    mut timescale: ResMut<TimeScale>,
+    mut query: Query<(&mut Transform, &mut OrthographicProjection)>,
 ) {
+    let dist = 1.0 * time.delta().as_secs_f32();
+    if !USE_3D {
+        // FOR 3D RENDER
+        // We have to control this ourselves for 2d render
+        let mut scroll_y = 0.0;
+        for ev in scroll_evr.iter() {
+            match ev.unit {
+                MouseScrollUnit::Line => {
+                    // println!("Scroll (line units): vertical: {}, horizontal: {}", ev.y, ev.x);
+                    scroll_y -= ev.y
+                }
+                MouseScrollUnit::Pixel => {
+                    // println!("Scroll (pixel units): vertical: {}, horizontal: {}", ev.y, ev.x);
+                    scroll_y -= ev.y
+                }
+            }
+        }
+    
+        for (mut transform, mut projection) in query.iter_mut() {
+            let mut transform: Mut<Transform> = transform;
+            let mut log_scale = projection.scale.ln();
+    
+            log_scale += scroll_y * dist;
+    
+            projection.scale = log_scale.exp();
+            if keys.pressed(KeyCode::A) {
+                transform.translation.x -= 100.0 * projection.scale * time.delta().as_secs_f32();
+            }
+            if keys.pressed(KeyCode::D) {
+                transform.translation.x += 100.0 * projection.scale * time.delta().as_secs_f32();
+            }
+            if keys.pressed(KeyCode::S) {
+                transform.translation.y -= 100.0 * projection.scale * time.delta().as_secs_f32();
+            }
+            if keys.pressed(KeyCode::W) {
+                transform.translation.y += 100.0 * projection.scale * time.delta().as_secs_f32();
+            }
+        }
+    }
+
     if keys.pressed(KeyCode::Z) {
         timescale.0 = timescale.0 / 1.5;
     }
@@ -261,9 +336,9 @@ fn main() {
 fn add_particles(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
     let direction = 1.0; // clockwise
     let star_mass = 2000000000.0;
-    let max_distance = 5000;
-    let max_mass = 3000;
-    let amount = 1000;
+    let max_distance = 20000;
+    let max_mass = 300000;
+    let amount = 10000;
 
     let center_x = 0.0; // -250.0;
     let center_y = 0.0;
@@ -349,37 +424,6 @@ fn add_particles(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut m
     //     amount,
     //     direction,
     // );
-
-    // base camera
-    let translation = Vec3::new(-10.0, -10.0, -10.0);
-    let radius = translation.length();
-    commands.spawn_bundle(PerspectiveCameraBundle {
-        transform: Transform::from_translation(translation).looking_at(Vec3::ZERO, Vec3::Y),
-        ..default()
-    }).insert(PanOrbitCamera {
-        radius,
-        ..Default::default()
-    });
-    commands.spawn_bundle(PointLightBundle {
-        point_light: PointLight {
-            intensity: 10000.0,
-            shadows_enabled: false,
-            range: 10000.0,
-            ..default()
-        },
-        transform: Transform::from_xyz(-0.0, -0.0, -0.0),
-        ..default()
-    });
-    commands.spawn_bundle(PointLightBundle {
-        point_light: PointLight {
-            intensity: 10000.0,
-            shadows_enabled: false,
-            range: 10000.0,
-            ..default()
-        },
-        transform: Transform::from_xyz(-10.0, -10.0, -100.0),
-        ..default()
-    });
 }
 
 fn create_system(
@@ -388,15 +432,15 @@ fn create_system(
     mut materials: &mut ResMut<Assets<StandardMaterial>>,
     max_distance: i32,
     max_mass: i32,
-    center_x: f64,
-    center_y: f64,
-    center_z: f64,
-    base_vx: f64,
-    base_vy: f64,
-    base_vz: f64,
-    star_mass: f64,
+    center_x: f32,
+    center_y: f32,
+    center_z: f32,
+    base_vx: f32,
+    base_vy: f32,
+    base_vz: f32,
+    star_mass: f32,
     amount: i32,
-    direction: f64,
+    direction: f32,
 ) {
     let mut rng = rand::thread_rng();
     let distance = Uniform::from(10..=max_distance);
@@ -418,12 +462,12 @@ fn create_system(
         rng.gen::<f32>(),
     );
     for _ in 0..amount {
-        let r = distance.sample(&mut rng) as f64;
-        let m = mass.sample(&mut rng) as f64;
+        let r = distance.sample(&mut rng) as f32;
+        let m = mass.sample(&mut rng) as f32;
 
         let v = ((GRAVITY * star_mass) / r).sqrt();
 
-        let theta = rng.gen::<f64>() * 2.0 * std::f64::consts::PI;
+        let theta = rng.gen::<f32>() * 2.0 * std::f32::consts::PI;
 
         let v_x = base_vx + theta.sin() * v * direction;
         let v_y = base_vy + theta.cos() * v * direction;
@@ -455,29 +499,43 @@ fn create_star<'a>(
     commands: &'a mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
-    x: f64,
-    y: f64,
-    z: f64,
-    vx: f64,
-    vy: f64,
-    vz: f64,
-    mass: f64,
+    x: f32,
+    y: f32,
+    z: f32,
+    vx: f32,
+    vy: f32,
+    vz: f32,
+    mass: f32,
     r: f32,
     g: f32,
     b: f32,
 ) {
-    // let shape = shapes::Circle {
-    //     radius: (mass.log10()) as f32,
-    //     ..shapes::Circle::default()
-    // };
-    let material = materials.add(Color::rgb(r, g, b).into());
-    let mesh = meshes.add(Mesh::from(
-        shape::Icosphere { subdivisions: 4, radius: (mass.log10()) as f32 },
-    ));
-    commands
-        .spawn_bundle(PbrBundle {
+    let mut ec = if USE_3D {
+        // FOR 3D RENDER
+        let material = materials.add(Color::rgb(r, g, b).into());
+        let mesh = meshes.add(Mesh::from(
+            shape::Icosphere { subdivisions: 4, radius: (mass.log10()) as f32 },
+        ));
+        commands.spawn_bundle(PbrBundle {
             mesh, material, ..default()
         })
+    } else {
+        // FOR 2D RENDER
+        let shape = shapes::Circle {
+            radius: (mass.log10()) as f32,
+            ..shapes::Circle::default()
+        };
+        commands.spawn_bundle(GeometryBuilder::build_as(
+            &shape,
+            DrawMode::Outlined {
+                fill_mode: FillMode::color(Color::rgb(r, g, b)),
+                outline_mode: StrokeMode::new(Color::WHITE, 0.5),
+            },
+            Transform::default(),
+        ))
+    };
+
+    ec
         .insert(Transform { ..default() })
         .insert(Particle { mass, x, y, z, vx, vy, vz });
 
@@ -493,7 +551,7 @@ fn apply_forces(
     mut application: ResMut<gpu::Application>,
     mut query: Query<&mut Particle>,
 ) {
-    let dt = time.delta_seconds() as f64 * timescale.0;
+    let dt = time.delta_seconds() as f32 * timescale.0 as f32;
     let mut particles = Vec::<Particle>::new();
     query.for_each(|particle| {
         particles.push(*particle as Particle);
@@ -503,12 +561,12 @@ fn apply_forces(
         Some(e) => e,
         None => return
     };
+
     
+    let mut i = 0;
     for mut particle in query.iter_mut() {
-        *particle = match new_particles.pop() {
-            Some(e) => e,
-            None => continue
-        };
+        *particle = new_particles[i];
+        i += 1;
     }
 }
 
@@ -523,59 +581,59 @@ fn massive_objects_manager(mut commands: Commands, query: Query<(Entity, &mut Pa
 }
 
 fn collision_manager(mut commands: Commands, query: Query<(Entity, &Transform), With<MassiveObjects>>, mut query2: Query<&mut Particle>, treeaccess: Res<NNTree>) {
-    for (entity, transform) in query.iter() {
-        let radius = {
-            let p1: Particle = match query2.get(entity) {
-                Ok(e) => *e,
-                Err(_) => continue
-            };
+    // for (entity, transform) in query.iter() {
+    //     let radius = {
+    //         let p1: Particle = match query2.get(entity) {
+    //             Ok(e) => *e,
+    //             Err(_) => continue
+    //         };
             
-            // let span = info_span!("mass_check").entered();
-            // if p1.mass > 10000.0 {
-            //     commands.entity(entity).insert(MassiveObjects);
-            // } else {
-            //     commands.entity(entity).remove::<MassiveObjects>();
-            // }
-            // span.exit();
+    //         // let span = info_span!("mass_check").entered();
+    //         // if p1.mass > 10000.0 {
+    //         //     commands.entity(entity).insert(MassiveObjects);
+    //         // } else {
+    //         //     commands.entity(entity).remove::<MassiveObjects>();
+    //         // }
+    //         // span.exit();
             
-            p1.radius() * 1.20
-        };
+    //         p1.radius() * 1.20
+    //     };
 
         
-        let span = info_span!("check_tree").entered();
-        for (_, entity2) in treeaccess.within_distance(transform.translation, radius as f32) {
-            let [p1, p2] = match query2.get_many_mut([entity, entity2]) {
-                Ok(e) => e,
-                Err(_) => continue
-            };
-            let mut p1: Mut<Particle> = p1;
-            let p2: Mut<Particle> = p2;
+    //     let span = info_span!("check_tree").entered();
+    //     for (_, entity2) in treeaccess.within_distance(transform.translation, radius as f32) {
+    //         let [p1, p2] = match query2.get_many_mut([entity, entity2]) {
+    //             Ok(e) => e,
+    //             Err(_) => continue
+    //         };
+    //         let mut p1: Mut<Particle> = p1;
+    //         let p2: Mut<Particle> = p2;
             
-            // if p1.mass > 50.0 || p2.mass > 50.0 {
-            if true {
-                if p2.mass > p1.mass {
-                    continue
-                }
+    //         // if p1.mass > 50.0 || p2.mass > 50.0 {
+    //         if true {
+    //             if p2.mass > p1.mass {
+    //                 continue
+    //             }
 
-                // Combine
-                commands.entity(entity2).despawn();
+    //             // Combine
+    //             commands.entity(entity2).despawn();
 
-                let momentum_x = p1.mass * p1.vx + p2.mass * p2.vx * 0.75; // assume some energy lost;
-                let momentum_y = p1.mass * p1.vy + p2.mass * p2.vy * 0.75; // assume some energy lost;
-                let momentum_z = p1.mass * p1.vz + p2.mass * p2.vz * 0.75; // assume some energy lost;
+    //             let momentum_x = p1.mass * p1.vx + p2.mass * p2.vx * 0.75; // assume some energy lost;
+    //             let momentum_y = p1.mass * p1.vy + p2.mass * p2.vy * 0.75; // assume some energy lost;
+    //             let momentum_z = p1.mass * p1.vz + p2.mass * p2.vz * 0.75; // assume some energy lost;
 
-                // if p2.color == YELLOW || p1.color == YELLOW {
-                //     p1.color = YELLOW;
-                // }
+    //             // if p2.color == YELLOW || p1.color == YELLOW {
+    //             //     p1.color = YELLOW;
+    //             // }
 
-                p1.mass += p2.mass;
-                p1.vx = momentum_x / p1.mass;
-                p1.vy = momentum_y / p1.mass;
-                p1.vz = momentum_z / p1.mass;
-            }
-        }
-        span.exit();
-    }
+    //             p1.mass += p2.mass;
+    //             p1.vx = momentum_x / p1.mass;
+    //             p1.vy = momentum_y / p1.mass;
+    //             p1.vz = momentum_z / p1.mass;
+    //         }
+    //     }
+    //     span.exit();
+    // }
 }
 
 fn transform_objects(mut query: Query<(&mut Particle, &mut Transform)>) {
