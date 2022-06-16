@@ -16,7 +16,7 @@ struct Particle {
 
 uniform int u_particle_count;
 uniform float u_dt;
-const float GRAVITY = 0.000000000066742 * 1000;
+const float GRAVITY = 0.000000000066742;
 
 layout(shared, binding = 0) writeonly buffer OutputData
 {

@@ -1,7 +1,7 @@
 use std::os::raw::c_void;
 
 use bevy::{
-    input::mouse::{MouseScrollUnit, MouseWheel, MouseMotion},
+    input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel},
     prelude::*,
     tasks::AsyncComputeTaskPool,
 };
@@ -15,6 +15,7 @@ mod gpu;
 use fragile::Fragile;
 
 const USE_3D: bool = true;
+
 type ImplIteratorMut<'a, Item> =
     ::std::iter::Chain<::std::slice::IterMut<'a, Item>, ::std::slice::IterMut<'a, Item>>;
 trait SplitOneMut {
@@ -66,7 +67,9 @@ fn pan_orbit_camera(
     input_mouse: Res<Input<MouseButton>>,
     mut query: Query<(&mut PanOrbitCamera, &mut Transform, &PerspectiveProjection)>,
 ) {
-    if !USE_3D { return };
+    if !USE_3D {
+        return;
+    };
     // change input mapping for orbit and panning here
     let orbit_button = MouseButton::Right;
     let pan_button = MouseButton::Middle;
@@ -107,7 +110,11 @@ fn pan_orbit_camera(
             let window = get_primary_window_size(&windows);
             let delta_x = {
                 let delta = rotation_move.x / window.x * std::f32::consts::PI * 2.0;
-                if pan_orbit.upside_down { -delta } else { delta }
+                if pan_orbit.upside_down {
+                    -delta
+                } else {
+                    delta
+                }
             };
             let delta_y = rotation_move.y / window.y * std::f32::consts::PI;
             let yaw = Quat::from_rotation_y(-delta_x);
@@ -137,7 +144,8 @@ fn pan_orbit_camera(
             // parent = x and y rotation
             // child = z-offset
             let rot_matrix = Mat3::from_quat(transform.rotation);
-            transform.translation = pan_orbit.focus + rot_matrix.mul_vec3(Vec3::new(0.0, 0.0, pan_orbit.radius));
+            transform.translation =
+                pan_orbit.focus + rot_matrix.mul_vec3(Vec3::new(0.0, 0.0, pan_orbit.radius));
         }
     }
 }
@@ -216,16 +224,18 @@ impl PartialEq for Particle {
 }
 
 fn setup_camera(mut commands: Commands) {
-    if USE_3D {    
-        let translation = Vec3::new(-10.0, -10.0, -10.0);
+    if USE_3D {
+        let translation = Vec3::new(-1000.0, -1000.0, -1000.0);
         let radius = translation.length();
-        commands.spawn_bundle(PerspectiveCameraBundle {
-            transform: Transform::from_translation(translation).looking_at(Vec3::ZERO, Vec3::Y),
-            ..default()
-        }).insert(PanOrbitCamera {
-            radius,
-            ..Default::default()
-        });
+        commands
+            .spawn_bundle(PerspectiveCameraBundle {
+                transform: Transform::from_translation(translation).looking_at(Vec3::ZERO, Vec3::Y),
+                ..default()
+            })
+            .insert(PanOrbitCamera {
+                radius,
+                ..Default::default()
+            });
         commands.spawn_bundle(PointLightBundle {
             point_light: PointLight {
                 intensity: 10000.0,
@@ -276,13 +286,13 @@ fn camera_control(
                 }
             }
         }
-    
-        for (mut transform, mut projection) in query.iter_mut() {
+
+        for (transform, mut projection) in query.iter_mut() {
             let mut transform: Mut<Transform> = transform;
             let mut log_scale = projection.scale.ln();
-    
+
             log_scale += scroll_y * dist;
-    
+
             projection.scale = log_scale.exp();
             if keys.pressed(KeyCode::A) {
                 transform.translation.x -= 100.0 * projection.scale * time.delta().as_secs_f32();
@@ -319,9 +329,7 @@ fn main() {
         .insert_resource(gpu::Application::new().unwrap())
         .add_plugins(DefaultPlugins)
         .add_plugin(ShapePlugin)
-        .add_plugin(
-            RTreePlugin3D::<Particle, EfficientInsertParams> { ..default() },
-        )
+        .add_plugin(RTreePlugin3D::<Particle, EfficientInsertParams> { ..default() })
         .add_startup_system(setup_camera)
         .add_startup_system(add_particles)
         .add_system(apply_forces)
@@ -333,46 +341,20 @@ fn main() {
         .run();
 }
 
-fn add_particles(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
-    let direction = 1.0; // clockwise
-    let star_mass = 2000000000.0;
-    let max_distance = 20000;
-    let max_mass = 300000;
-    let amount = 10000;
-
-    let center_x = 0.0; // -250.0;
-    let center_y = 0.0;
-    let center_z = 0.0;
-    let base_vx = 0.0;
-    let base_vy = 0.0;
-    let base_vz = 0.0;
-
-    create_system(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        max_distance,
-        max_mass,
-        center_x,
-        center_y,
-        center_z,
-        base_vx,
-        base_vy,
-        base_vz,
-        star_mass,
-        amount,
-        direction,
-    );
-
+fn add_particles(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
     // let direction = 1.0; // clockwise
     // let star_mass = 2000000000.0;
-    // let max_distance = 5000;
-    // let max_mass = 3000;
+    // let max_distance = 20000;
+    // let max_mass = 300000;
     // let amount = 10000;
 
-    // let center_x = 550.0; // -250.0;
-    // let center_y = -100.0;
-    // let center_z = -200.0;
+    // let center_x = 0.0; // -250.0;
+    // let center_y = 0.0;
+    // let center_z = 0.0;
     // let base_vx = 0.0;
     // let base_vy = 0.0;
     // let base_vz = 0.0;
@@ -394,38 +376,50 @@ fn add_particles(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut m
     //     direction,
     // );
 
-    
-    // let direction = 1.0; // clockwise
-    // let star_mass = 2000000000.0;
-    // let max_distance = 5000;
-    // let max_mass = 3000;
-    // let amount = 10000;
-
-    // let center_x = 550.0; // -250.0;
-    // let center_y = 500.0;
-    // let center_z = 200.0;
-    // let base_vx = 0.0;
-    // let base_vy = 0.0;
-    // let base_vz = 0.0;
-
-    // create_system(
+    // // Make earth
+    // create_star(
     //     &mut commands,
     //     &mut meshes,
     //     &mut materials,
-    //     max_distance,
-    //     max_mass,
-    //     center_x,
-    //     center_y,
-    //     center_z,
-    //     base_vx,
-    //     base_vy,
-    //     base_vz,
-    //     star_mass,
-    //     amount,
-    //     direction,
+    //     0.0,
+    //     0.0,
+    //     0.0,
+    //     0.0,
+    //     0.0,
+    //     0.0,
+    //     5_973_600_000_000_000_000_000_000.0,
+    //     0.0,
+    //     1.0,
+    //     0.0,
     // );
+
+    // // Make moon
+    // create_star(
+    //     &mut commands,
+    //     &mut meshes,
+    //     &mut materials,
+    //     0.0,
+    //     406_700_000.0,
+    //     0.0,
+    //     1082.0,
+    //     0.0,
+    //     0.0,
+    //     7.342e+22,
+    //     0.7,
+    //     0.7,
+    //     0.7,
+    // );
+
+
+    // Here the gravitational constant G has been set to 1, and the initial
+    // conditions are r1(0) = −r3(0) = (−0.97000436, 0.24308753); 
+    // r2(0) = (0,0); v1(0) = v3(0) = (0.4662036850, 0.4323657300);
+    // v2(0) = (−0.93240737, −0.86473146).
+    // 
+    // The values are obtained from Chenciner & Montgomery (2000).
 }
 
+#[allow(dead_code)]
 fn create_system(
     mut commands: &mut Commands,
     mut meshes: &mut ResMut<Assets<Mesh>>,
@@ -513,11 +507,14 @@ fn create_star<'a>(
     let mut ec = if USE_3D {
         // FOR 3D RENDER
         let material = materials.add(Color::rgb(r, g, b).into());
-        let mesh = meshes.add(Mesh::from(
-            shape::Icosphere { subdivisions: 4, radius: (mass.log10()) as f32 },
-        ));
+        let mesh = meshes.add(Mesh::from(shape::Icosphere {
+            subdivisions: 4,
+            radius: (mass.log10() * 1000000.0) as f32,
+        }));
         commands.spawn_bundle(PbrBundle {
-            mesh, material, ..default()
+            mesh,
+            material,
+            ..default()
         })
     } else {
         // FOR 2D RENDER
@@ -535,9 +532,15 @@ fn create_star<'a>(
         ))
     };
 
-    ec
-        .insert(Transform { ..default() })
-        .insert(Particle { mass, x, y, z, vx, vy, vz });
+    ec.insert(Transform { ..default() }).insert(Particle {
+        mass,
+        x,
+        y,
+        z,
+        vx,
+        vy,
+        vz,
+    });
 
     // if mass > 10_000.0 {
     //     commands.entity(id).insert(MassiveObjects);
@@ -557,12 +560,11 @@ fn apply_forces(
         particles.push(*particle as Particle);
     });
 
-    let mut new_particles = match application.run(dt as f32, particles) {
+    let new_particles = match application.run(dt as f32, particles) {
         Some(e) => e,
-        None => return
+        None => return,
     };
 
-    
     let mut i = 0;
     for mut particle in query.iter_mut() {
         *particle = new_particles[i];
@@ -580,14 +582,19 @@ fn massive_objects_manager(mut commands: Commands, query: Query<(Entity, &mut Pa
     })
 }
 
-fn collision_manager(mut commands: Commands, query: Query<(Entity, &Transform), With<MassiveObjects>>, mut query2: Query<&mut Particle>, treeaccess: Res<NNTree>) {
+fn collision_manager(
+    mut commands: Commands,
+    query: Query<(Entity, &Transform), With<MassiveObjects>>,
+    mut query2: Query<&mut Particle>,
+    treeaccess: Res<NNTree>,
+) {
     // for (entity, transform) in query.iter() {
     //     let radius = {
     //         let p1: Particle = match query2.get(entity) {
     //             Ok(e) => *e,
     //             Err(_) => continue
     //         };
-            
+
     //         // let span = info_span!("mass_check").entered();
     //         // if p1.mass > 10000.0 {
     //         //     commands.entity(entity).insert(MassiveObjects);
@@ -595,11 +602,10 @@ fn collision_manager(mut commands: Commands, query: Query<(Entity, &Transform), 
     //         //     commands.entity(entity).remove::<MassiveObjects>();
     //         // }
     //         // span.exit();
-            
+
     //         p1.radius() * 1.20
     //     };
 
-        
     //     let span = info_span!("check_tree").entered();
     //     for (_, entity2) in treeaccess.within_distance(transform.translation, radius as f32) {
     //         let [p1, p2] = match query2.get_many_mut([entity, entity2]) {
@@ -608,7 +614,7 @@ fn collision_manager(mut commands: Commands, query: Query<(Entity, &Transform), 
     //         };
     //         let mut p1: Mut<Particle> = p1;
     //         let p2: Mut<Particle> = p2;
-            
+
     //         // if p1.mass > 50.0 || p2.mass > 50.0 {
     //         if true {
     //             if p2.mass > p1.mass {
