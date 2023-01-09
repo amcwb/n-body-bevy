@@ -1,4 +1,4 @@
-use bevy::prelude::{Component, info_span};
+use bevy::prelude::{Component, info_span, Resource};
 use glw::gl::types::{GLenum, GLchar};
 use glw::glfw::{Window, WindowEvent, Context};
 use glw::{glfw, gl, GLContext};
@@ -79,6 +79,8 @@ unsafe impl Send for WindowPtr {}
 unsafe impl Sync for WindowPtr {}
 unsafe impl Send for ReceiverPtr {}
 unsafe impl Sync for ReceiverPtr {}
+
+#[derive(Resource)]
 pub struct Application {
     /// GLFW specific things
     glfw: glfw::Glfw,

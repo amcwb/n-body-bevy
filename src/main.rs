@@ -5,16 +5,15 @@ use bevy::{
     prelude::*,
     tasks::AsyncComputeTaskPool,
 };
+use bevy_spatial::{RTreeAccess3D, RTreePlugin3D, SpatialAccess};
 use bevy_prototype_lyon::prelude::*;
-use glw::gl;
-use gpu::Particle;
+use crate::wgpu::{Particle, Application};
 use rand::{distributions::Uniform, prelude::Distribution, Rng};
 // use directx_math::XMScalarSinCos;
-use bevy_spatial::{EfficientInsertParams, RTreeAccess3D, RTreePlugin3D, SpatialAccess};
 mod gpu;
+mod wgpu;
 use fragile::Fragile;
-
-const USE_3D: bool = true;
+const USE_3D: bool = false;
 
 type ImplIteratorMut<'a, Item> =
     ::std::iter::Chain<::std::slice::IterMut<'a, Item>, ::std::slice::IterMut<'a, Item>>;
@@ -156,14 +155,14 @@ fn get_primary_window_size(windows: &Res<Windows>) -> Vec2 {
     window
 }
 
-#[derive(Component)]
+#[derive(Resource)]
 struct TimeScale(f64);
 
 #[derive(Component)]
 struct MassiveObjects;
 
 // type alias for easier usage later
-type NNTree = RTreeAccess3D<Particle, EfficientInsertParams>;
+type NNTree = RTreeAccess3D<Particle>;
 
 const GRAVITY: f32 = 0.000000000066742 * 1000.0;
 impl Particle {
@@ -228,7 +227,7 @@ fn setup_camera(mut commands: Commands) {
         let translation = Vec3::new(-1000.0, -1000.0, -1000.0);
         let radius = translation.length();
         commands
-            .spawn_bundle(PerspectiveCameraBundle {
+            .spawn(Camera3dBundle {
                 transform: Transform::from_translation(translation).looking_at(Vec3::ZERO, Vec3::Y),
                 ..default()
             })
@@ -236,7 +235,7 @@ fn setup_camera(mut commands: Commands) {
                 radius,
                 ..Default::default()
             });
-        commands.spawn_bundle(PointLightBundle {
+        commands.spawn(PointLightBundle {
             point_light: PointLight {
                 intensity: 10000.0,
                 shadows_enabled: false,
@@ -246,7 +245,7 @@ fn setup_camera(mut commands: Commands) {
             transform: Transform::from_xyz(-0.0, -0.0, -0.0),
             ..default()
         });
-        commands.spawn_bundle(PointLightBundle {
+        commands.spawn(PointLightBundle {
             point_light: PointLight {
                 intensity: 10000.0,
                 shadows_enabled: false,
@@ -257,7 +256,7 @@ fn setup_camera(mut commands: Commands) {
             ..default()
         });
     } else {
-        commands.spawn_bundle(OrthographicCameraBundle::new_2d());
+        commands.spawn(Camera2dBundle { ..default() });
     };
     commands.insert_resource(TimeScale(1.0));
 }
@@ -319,17 +318,19 @@ fn camera_control(
 
 fn main() {
     App::new()
-        .insert_resource(WindowDescriptor {
-            title: "N-body simulator".to_string(),
-            width: 640.0,
-            height: 400.0,
-            ..default()
-        })
         .insert_resource(ClearColor(Color::rgb(0.0, 0.0, 0.0)))
-        .insert_resource(gpu::Application::new().unwrap())
-        .add_plugins(DefaultPlugins)
+        .insert_resource(Application::new_sync())
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            window: WindowDescriptor {
+                title: "N-body simulator".to_string(),
+                width: 640.0,
+                height: 400.0,
+                ..default()
+            },
+            ..default()
+        }))
         .add_plugin(ShapePlugin)
-        .add_plugin(RTreePlugin3D::<Particle, EfficientInsertParams> { ..default() })
+        .add_plugin(RTreePlugin3D::<Particle> { ..default() })
         .add_startup_system(setup_camera)
         .add_startup_system(add_particles)
         .add_system(apply_forces)
@@ -346,35 +347,35 @@ fn add_particles(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    // let direction = 1.0; // clockwise
-    // let star_mass = 2000000000.0;
-    // let max_distance = 20000;
-    // let max_mass = 300000;
-    // let amount = 10000;
+    let direction = 1.0; // clockwise
+    let star_mass = 2000000000.0;
+    let max_distance = 20000;
+    let max_mass = 300000;
+    let amount = 1000;
 
-    // let center_x = 0.0; // -250.0;
-    // let center_y = 0.0;
-    // let center_z = 0.0;
-    // let base_vx = 0.0;
-    // let base_vy = 0.0;
-    // let base_vz = 0.0;
+    let center_x = 0.0; // -250.0;
+    let center_y = 0.0;
+    let center_z = 0.0;
+    let base_vx = 0.0;
+    let base_vy = 0.0;
+    let base_vz = 0.0;
 
-    // create_system(
-    //     &mut commands,
-    //     &mut meshes,
-    //     &mut materials,
-    //     max_distance,
-    //     max_mass,
-    //     center_x,
-    //     center_y,
-    //     center_z,
-    //     base_vx,
-    //     base_vy,
-    //     base_vz,
-    //     star_mass,
-    //     amount,
-    //     direction,
-    // );
+    create_system(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        max_distance,
+        max_mass,
+        center_x,
+        center_y,
+        center_z,
+        base_vx,
+        base_vy,
+        base_vz,
+        star_mass,
+        amount,
+        direction,
+    );
 
     // // Make earth
     // create_star(
@@ -550,8 +551,7 @@ fn create_star<'a>(
 fn apply_forces(
     timescale: Res<TimeScale>,
     time: Res<Time>,
-    pool: Res<AsyncComputeTaskPool>,
-    mut application: ResMut<gpu::Application>,
+    mut application: ResMut<Application>,
     mut query: Query<&mut Particle>,
 ) {
     let dt = time.delta_seconds() as f32 * timescale.0 as f32;
@@ -560,8 +560,10 @@ fn apply_forces(
         particles.push(*particle as Particle);
     });
 
-    let new_particles = match application.run(dt as f32, particles) {
-        Some(e) => e,
+    let new_particles = match application.run_sync(dt as f32, particles) {
+        Some(e) => {
+            e
+        },
         None => return,
     };
 

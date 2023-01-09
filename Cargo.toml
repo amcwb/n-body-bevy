@@ -7,12 +7,16 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bevy = { version = "0.7.0" }
-bevy_prototype_lyon = "0.5.0"
+bevy = "0.9"
+bevy_spatial = { version = "0.4.0", features=["rstar"] }
+bevy_prototype_lyon = "0.7.2"
 rand = "0.8.3"
-bevy_spatial = { version = "0.1.0", features=["rstar"] }
 glw = { git = "https://github.com/jonathansty/rs-glw" }
 fragile = "1.2.1"
+wgpu = "0.14.2"
+bytemuck = { version = "1.12.3", features = [ "derive" ] }
+futures-intrusive = "0.5.0"
+futures = "0.3.1"
 
 [profile.release]
 debug = 1
