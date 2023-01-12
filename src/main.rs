@@ -3,11 +3,11 @@ use std::os::raw::c_void;
 use bevy::{
     input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel},
     prelude::*,
-    tasks::AsyncComputeTaskPool,
+    tasks::AsyncComputeTaskPool, render::settings,
 };
 use bevy_spatial::{RTreeAccess3D, RTreePlugin3D, SpatialAccess};
 use bevy_prototype_lyon::prelude::*;
-use crate::wgpu::{Particle, Application};
+use crate::wgpu::{Particle, Application, ComputePlugin};
 use rand::{distributions::Uniform, prelude::Distribution, Rng};
 // use directx_math::XMScalarSinCos;
 mod gpu;
@@ -333,12 +333,11 @@ fn main() {
         .add_plugin(RTreePlugin3D::<Particle> { ..default() })
         .add_startup_system(setup_camera)
         .add_startup_system(add_particles)
-        .add_system(apply_forces)
         .add_system(transform_objects)
         .add_system(camera_control)
-        .add_system(massive_objects_manager.before(collision_manager))
-        .add_system(collision_manager)
         .add_system(pan_orbit_camera)
+
+        .add_plugin(ComputePlugin)
         .run();
 }
 
@@ -653,3 +652,4 @@ fn transform_objects(mut query: Query<(&mut Particle, &mut Transform)>) {
         *transform = Transform::from_xyz(particle.x as f32, particle.y as f32, particle.z as f32)
     }
 }
+
