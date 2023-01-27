@@ -2207,6 +2207,7 @@ dependencies = [
  "futures",
  "futures-intrusive",
  "glw",
+ "parking_lot",
  "rand",
  "wgpu",
 ]

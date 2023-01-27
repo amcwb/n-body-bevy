@@ -5,14 +5,18 @@ struct Particle {
     vx: f32,
     vy: f32,
     vz: f32,
-    mass: f32,
-    dt: f32
+    mass: f32
 };
 
 @group(0)
 // Binding 0 matches wgpu::BindGroupEntry
 @binding(0)
 var<storage, read_write> v_particles: array<Particle>; // this is used as both input and output for convenience
+
+@group(0)
+// Binding 0 matches wgpu::BindGroupEntry
+@binding(1)
+var<uniform> dt: f32; // this is used as both input and output for convenience
 
 let GRAVITY: f32 = 0.000000066742;
 
@@ -38,8 +42,8 @@ fn calculate_gravity(particle1: Particle, index: u32) -> Particle {
         directed_force = directed_force + (d_axis / d_sqrt) * raw_force;
     }
     
-    var velocity: vec3<f32> = vec3(particle1.vx, particle1.vy, particle1.vz) + directed_force / particle1.mass * particle1.dt;
-    var position: vec3<f32> = velocity * particle1.dt;
+    var velocity: vec3<f32> = vec3(particle1.vx, particle1.vy, particle1.vz) + directed_force / particle1.mass * dt;
+    var position: vec3<f32> = velocity * dt;
 
     return Particle(
         particle1.x + position.x,
@@ -48,8 +52,7 @@ fn calculate_gravity(particle1: Particle, index: u32) -> Particle {
         velocity.x,
         velocity.y,
         velocity.z,
-        particle1.mass,
-        particle1.dt
+        particle1.mass
     );
 }
 

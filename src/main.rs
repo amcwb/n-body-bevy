@@ -7,7 +7,7 @@ use bevy::{
 };
 use bevy_spatial::{RTreeAccess3D, RTreePlugin3D, SpatialAccess};
 use bevy_prototype_lyon::prelude::*;
-use crate::wgpu::{Particle, Application, ComputePlugin};
+use crate::wgpu::{Particle, ComputePlugin};
 use rand::{distributions::Uniform, prelude::Distribution, Rng};
 // use directx_math::XMScalarSinCos;
 mod gpu;
@@ -319,7 +319,7 @@ fn camera_control(
 fn main() {
     App::new()
         .insert_resource(ClearColor(Color::rgb(0.0, 0.0, 0.0)))
-        .insert_resource(Application::new_sync())
+        // .insert_resource(Application::new_sync())
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             window: WindowDescriptor {
                 title: "N-body simulator".to_string(),
@@ -519,7 +519,7 @@ fn create_star<'a>(
     } else {
         // FOR 2D RENDER
         let shape = shapes::Circle {
-            radius: (mass.log10()) as f32,
+            radius: (mass.log10() * 2.0) as f32,
             ..shapes::Circle::default()
         };
         commands.spawn_bundle(GeometryBuilder::build_as(
@@ -547,101 +547,7 @@ fn create_star<'a>(
     // }
 }
 
-fn apply_forces(
-    timescale: Res<TimeScale>,
-    time: Res<Time>,
-    mut application: ResMut<Application>,
-    mut query: Query<&mut Particle>,
-) {
-    let dt = time.delta_seconds() as f32 * timescale.0 as f32;
-    let mut particles = Vec::<Particle>::new();
-    query.for_each(|particle| {
-        particles.push(*particle as Particle);
-    });
-
-    let new_particles = match application.run_sync(dt as f32, particles) {
-        Some(e) => {
-            e
-        },
-        None => return,
-    };
-
-    let mut i = 0;
-    for mut particle in query.iter_mut() {
-        *particle = new_particles[i];
-        i += 1;
-    }
-}
-
-fn massive_objects_manager(mut commands: Commands, query: Query<(Entity, &mut Particle)>) {
-    query.for_each(|(entity, p)| {
-        if p.mass > 10000.0 {
-            commands.entity(entity).insert(MassiveObjects);
-        } else {
-            commands.entity(entity).remove::<MassiveObjects>();
-        }
-    })
-}
-
-fn collision_manager(
-    mut commands: Commands,
-    query: Query<(Entity, &Transform), With<MassiveObjects>>,
-    mut query2: Query<&mut Particle>,
-    treeaccess: Res<NNTree>,
-) {
-    // for (entity, transform) in query.iter() {
-    //     let radius = {
-    //         let p1: Particle = match query2.get(entity) {
-    //             Ok(e) => *e,
-    //             Err(_) => continue
-    //         };
-
-    //         // let span = info_span!("mass_check").entered();
-    //         // if p1.mass > 10000.0 {
-    //         //     commands.entity(entity).insert(MassiveObjects);
-    //         // } else {
-    //         //     commands.entity(entity).remove::<MassiveObjects>();
-    //         // }
-    //         // span.exit();
-
-    //         p1.radius() * 1.20
-    //     };
-
-    //     let span = info_span!("check_tree").entered();
-    //     for (_, entity2) in treeaccess.within_distance(transform.translation, radius as f32) {
-    //         let [p1, p2] = match query2.get_many_mut([entity, entity2]) {
-    //             Ok(e) => e,
-    //             Err(_) => continue
-    //         };
-    //         let mut p1: Mut<Particle> = p1;
-    //         let p2: Mut<Particle> = p2;
-
-    //         // if p1.mass > 50.0 || p2.mass > 50.0 {
-    //         if true {
-    //             if p2.mass > p1.mass {
-    //                 continue
-    //             }
-
-    //             // Combine
-    //             commands.entity(entity2).despawn();
-
-    //             let momentum_x = p1.mass * p1.vx + p2.mass * p2.vx * 0.75; // assume some energy lost;
-    //             let momentum_y = p1.mass * p1.vy + p2.mass * p2.vy * 0.75; // assume some energy lost;
-    //             let momentum_z = p1.mass * p1.vz + p2.mass * p2.vz * 0.75; // assume some energy lost;
-
-    //             // if p2.color == YELLOW || p1.color == YELLOW {
-    //             //     p1.color = YELLOW;
-    //             // }
-
-    //             p1.mass += p2.mass;
-    //             p1.vx = momentum_x / p1.mass;
-    //             p1.vy = momentum_y / p1.mass;
-    //             p1.vz = momentum_z / p1.mass;
-    //         }
-    //     }
-    //     span.exit();
-    // }
-}
+// TODO: Make particles a resource and have entityIds referring to their app world versions?
 
 fn transform_objects(mut query: Query<(&mut Particle, &mut Transform)>) {
     for (particle, transform) in query.iter_mut() {
